@@ -189,15 +189,13 @@ attr BControl_EnergyManager interval 60
 
 ```perl
 # Device anlegen
-define BControl_EnergyManager BControl 192.168.178.115
+define BControl_EnergyManager BControl 192.168.178.123
 
 # Passwort einmalig setzen – erscheint NICHT in fhem.cfg:
 # set BControl_EnergyManager password deinPasswort
 
 attr BControl_EnergyManager alias B-Control EnergyManager Heizstab
 attr BControl_EnergyManager interval 60
-attr BControl_EnergyManager group Energie
-attr BControl_EnergyManager room 90_System_PvAnlage
 
 attr BControl_EnergyManager event-on-change-reading Heizstab_Total_Watt,Boilertemperatur_ist,Boilertemperatur_soll
 attr BControl_EnergyManager DbLogExclude .*
