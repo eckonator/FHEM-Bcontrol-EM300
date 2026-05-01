@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>BControl · Heizstab</title>
+<style>
+  :root {
+    --bg-deep:   #04080f;
+    --bg-card:   #0c1420;
+    --bg-card2:  #101c2c;
+    --border:    rgba(255,255,255,.07);
+    --heat:      #ff6a2f;
+    --heat-dim:  rgba(255,106,47,.18);
+    --water:     #29b6f6;
+    --water-dim: rgba(41,182,246,.15);
+    --on-dim:    rgba(76,175,80,.18);
+    --off:       rgba(255,255,255,.12);
+    --text:      rgba(230,240,250,.85);
+    --sub:       rgba(180,200,220,.42);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; background:var(--bg-deep); color:var(--text);
+    font-family:'DM Sans',system-ui,sans-serif; font-size:15px; }
+
+  #particles { position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:0; }
+  .particle  { position:absolute; border-radius:50%; opacity:.18;
+    animation:pDrift 18s linear infinite; }
+  @keyframes pDrift {
+    0%   { transform:translate(0,0) scale(1); opacity:.18; }
+    50%  { opacity:.28; }
+    100% { transform:translate(60px,120px) scale(.6); opacity:0; }
+  }
+
+  #app { position:relative; z-index:1; max-width:480px; margin:0 auto; padding:0 16px 40px; }
+
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; padding:28px 0 20px; }
+  .hdr-title { font-size:28px; font-weight:700; letter-spacing:4px; color:#fff; text-transform:uppercase; }
+  .hdr-sub   { font-size:10px; letter-spacing:3px; color:var(--heat); margin-top:4px; }
+  .icon-btn  { width:42px; height:42px; border-radius:50%; background:var(--bg-card2);
+    border:1px solid var(--border); color:var(--sub); font-size:17px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .icon-btn:hover,.icon-btn.active { border-color:rgba(255,106,47,.45); color:var(--heat); }
+
+  .tabs { display:grid; grid-template-columns:1fr 1fr; background:var(--bg-card);
+    border-radius:14px; padding:4px; margin-bottom:16px; border:1px solid var(--border); }
+  .tab  { padding:10px; text-align:center; font-size:11px; font-weight:600; letter-spacing:2px;
+    text-transform:uppercase; border-radius:11px; cursor:pointer; color:var(--sub); transition:all .2s; }
+  .tab.active { background:var(--heat); color:#fff; }
+
+  .chips { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+  .chip  { padding:6px 14px; border-radius:20px; font-size:11px; font-weight:600;
+    letter-spacing:1.5px; text-transform:uppercase; border:1px solid var(--border);
+    color:var(--sub); display:flex; align-items:center; gap:6px; }
+  .chip.active  { border-color:#4caf50; color:#4caf50; background:var(--on-dim); }
+  .chip.warn    { border-color:var(--heat); color:var(--heat); background:var(--heat-dim); }
+  .chip.offline { border-color:#ff9800; color:#ff9800; background:rgba(255,152,0,.14); }
+  .chip-dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+
+  .card { background:var(--bg-card); border:1px solid var(--border);
+    border-radius:18px; padding:18px 20px; margin-bottom:12px; position:relative; overflow:hidden; }
+  .card-header { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  .card-icon   { width:34px; height:34px; border-radius:10px;
+    display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+  .ci-heat  { background:var(--heat-dim); }
+  .ci-water { background:var(--water-dim); }
+  .ci-power { background:rgba(245,196,0,.14); }
+  .card-title { font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:var(--sub); }
+  .card-sub   { font-size:12px; color:var(--sub); margin-top:6px; }
+
+  /* ═══════════════════════════════════════════
+     HEIZSTAB — COIL VISUAL
+  ═══════════════════════════════════════════ */
+  .coil-outer {
+    position:relative;
+    margin: 0 0 16px;
+    padding-top: 28px; /* room for shimmer */
+  }
+
+  /* heat shimmer above coil */
+  .coil-outer::before {
+    content:'';
+    position:absolute;
+    left:5%; right:5%;
+    top:0; height:28px;
+    background:radial-gradient(ellipse at 50% 100%, rgba(255,106,47,.35), transparent 70%);
+    opacity:0;
+    transition:opacity .6s;
+    pointer-events:none;
+    border-radius:50%;
+  }
+  .coil-outer.active::before {
+    opacity:1;
+    animation:shimmer-float 2.4s ease-in-out infinite;
+  }
+  @keyframes shimmer-float {
+    0%,100% { transform:scaleY(1) translateY(0);   opacity:.5; }
+    50%      { transform:scaleY(1.6) translateY(-5px); opacity:1; }
+  }
+
+  .coil-row {
+    display:flex;
+    gap:6px;
+    align-items:center;
+  }
+
+  .coil-group {
+    display:flex;
+    gap:4px;
+    flex:1;
+  }
+
+  .coil-seg {
+    flex:1;
+    height:13px;
+    border-radius:7px;
+    background:rgba(255,255,255,.07);
+    transition:background .35s, box-shadow .35s;
+  }
+
+  .coil-divider {
+    width:1px;
+    height:20px;
+    background:rgba(255,255,255,.12);
+    flex-shrink:0;
+  }
+
+  /* group lit states — heat colours get more intense per stage */
+  .coil-group.lit .coil-seg {
+    animation:coil-pulse 1.9s ease-in-out infinite;
+  }
+  .coil-group[data-stage="1"].lit .coil-seg {
+    background:linear-gradient(90deg,#e65100,#ff8f00);
+  }
+  .coil-group[data-stage="2"].lit .coil-seg {
+    background:linear-gradient(90deg,#ff3d00,#ff6a2f);
+    animation-delay:.25s;
+  }
+  .coil-group[data-stage="3"].lit .coil-seg {
+    background:linear-gradient(90deg,#ff1744,#ff3d00);
+    animation-delay:.5s;
+  }
+  @keyframes coil-pulse {
+    0%,100% { box-shadow:0 0 5px rgba(255,106,47,.5); }
+    50%      { box-shadow:0 0 16px rgba(255,106,47,.95), 0 0 32px rgba(255,80,0,.45); }
+  }
+
+  .coil-labels {
+    display:flex;
+    justify-content:space-around;
+    font-size:9px;
+    letter-spacing:1.2px;
+    text-transform:uppercase;
+    color:var(--sub);
+    margin-top:5px;
+  }
+
+  /* ═══════════════════════════════════════════
+     HEIZSTAB — STAGE ROWS
+  ═══════════════════════════════════════════ */
+  .stage-row {
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:11px 14px;
+    border-radius:13px;
+    border:1.5px solid rgba(255,255,255,.09);
+    background:rgba(255,255,255,.02);
+    margin-bottom:8px;
+    transition:border-color .3s, box-shadow .3s;
+    position:relative;
+    overflow:hidden;
+  }
+
+  /* left-edge heat accent */
+  .stage-row::before {
+    content:'';
+    position:absolute;
+    left:0; top:0; bottom:0;
+    width:3px;
+    background:linear-gradient(180deg,#ff6a2f,#ff1744);
+    border-radius:3px 0 0 3px;
+    opacity:0;
+    transition:opacity .3s;
+  }
+
+  .stage-row.on { border-color:rgba(255,106,47,.5); }
+  .stage-row.on::before { opacity:1; }
+  .stage-row.on { animation:stage-glow 2.6s ease-in-out infinite; }
+  @keyframes stage-glow {
+    0%,100% { box-shadow:0 0 0 rgba(255,106,47,0); }
+    50%      { box-shadow:0 0 18px rgba(255,106,47,.25), inset 0 0 24px rgba(255,106,47,.04); }
+  }
+
+  /* level icon (bar chart) */
+  .stage-icon {
+    width:36px; height:36px;
+    border-radius:10px;
+    background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.08);
+    display:flex; align-items:flex-end; justify-content:center;
+    gap:3px; padding:7px 7px 6px;
+    transition:background .3s, border-color .3s;
+    flex-shrink:0;
+  }
+  .stage-row.on .stage-icon {
+    background:var(--heat-dim);
+    border-color:rgba(255,106,47,.4);
+  }
+  .stage-icon .b {
+    width:5px; border-radius:2px 2px 1px 1px;
+    background:rgba(255,255,255,.18);
+    transition:background .3s;
+  }
+  .stage-row.on .stage-icon .b { background:var(--heat); }
+  .b-s { height:40%; }
+  .b-m { height:65%; }
+  .b-l { height:100%; }
+
+  .stage-info { flex:1; }
+  .stage-w    { font-size:20px; font-weight:700; color:var(--sub); transition:color .3s; line-height:1; }
+  .stage-lbl  { font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--sub); margin-top:3px; }
+  .stage-row.on .stage-w { color:var(--heat); }
+
+  .stage-pill {
+    padding:4px 12px; border-radius:20px; font-size:10px; font-weight:700;
+    letter-spacing:1.5px; text-transform:uppercase;
+    background:rgba(255,255,255,.05); color:var(--sub);
+    border:1px solid rgba(255,255,255,.1);
+    transition:all .3s; flex-shrink:0;
+  }
+  .stage-row.on .stage-pill {
+    background:rgba(255,106,47,.2);
+    color:var(--heat);
+    border-color:rgba(255,106,47,.5);
+  }
+
+  /* ═══════════════════════════════════════════
+     HEIZSTAB — POWER BAR + GAUGE
+  ═══════════════════════════════════════════ */
+  .power-section {
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px solid rgba(255,255,255,.06);
+  }
+
+  /* gradient bar */
+  .pbar-track {
+    height:10px; border-radius:5px;
+    background:rgba(255,255,255,.07);
+    overflow:hidden; position:relative;
+  }
+  .pbar-fill {
+    height:100%; border-radius:5px;
+    background:linear-gradient(90deg,#f5c400 0%,#ff6a2f 45%,#ff1744 100%);
+    transition:width .65s cubic-bezier(.4,0,.2,1);
+    position:relative;
+    min-width:0;
+  }
+  .pbar-fill::after {
+    content:'';
+    position:absolute; right:0; top:0; bottom:0;
+    width:18px;
+    background:rgba(255,255,255,.35);
+    filter:blur(4px);
+    border-radius:5px;
+  }
+  .pbar-labels {
+    display:flex; justify-content:space-between;
+    font-size:9px; color:rgba(180,200,220,.28);
+    letter-spacing:.4px; margin-top:4px;
+  }
+
+  /* arc gauge */
+  .gauge-wrap {
+    display:flex; flex-direction:column; align-items:center;
+    padding:8px 0 0; position:relative;
+  }
+  .gauge-svg { width:200px; height:112px; overflow:visible; }
+
+  .gauge-center {
+    position:absolute;
+    top:48px;
+    text-align:center;
+    width:140px;
+  }
+  .gauge-val  { font-size:42px; font-weight:800; color:var(--heat); line-height:1; transition:color .5s; }
+  .gauge-val.zero { color:var(--sub); }
+  .gauge-unit { font-size:14px; color:var(--sub); margin-top:1px; }
+  .gauge-lbl  { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--sub); margin-top:2px; }
+
+  /* ═══════════════════════════════════════════
+     BOILER CARD
+  ═══════════════════════════════════════════ */
+  .temp-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+  .temp-big { font-size:36px; font-weight:700; }
+  .temp-ist  { color:var(--water); }
+  .temp-soll { color:var(--heat); }
+  .temp-lbl  { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--sub); }
+  .temp-bar-wrap { height:8px; background:rgba(255,255,255,.08); border-radius:4px; overflow:hidden; margin:4px 0 8px; }
+  .temp-bar      { height:100%; border-radius:4px; background:var(--water); transition:width .5s, background .5s; min-width:4px; }
+  .soll-input-row { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .soll-input  { background:var(--bg-card2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:7px 12px; font-size:14px; width:80px; text-align:center; }
+  .soll-input:focus { outline:none; border-color:var(--heat); }
+  .soll-btn { background:var(--heat); color:#fff; border:none; border-radius:10px;
+    padding:7px 14px; font-size:12px; font-weight:600; cursor:pointer; letter-spacing:1px; }
+  .soll-btn:active { opacity:.8; }
+
+  /* energy meter */
+  .phase-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
+  .phase-card { background:var(--bg-card2); border-radius:12px; padding:10px;
+    text-align:center; border:1px solid var(--border); }
+  .phase-val { font-size:16px; font-weight:700; }
+  .phase-lbl { font-size:9px; letter-spacing:1.2px; text-transform:uppercase; color:var(--sub); margin-top:3px; }
+
+  /* settings */
+  .settings-panel { background:var(--bg-card); border:1px solid var(--border);
+    border-radius:18px; padding:20px; margin-bottom:12px; }
+  .settings-panel label { display:block; font-size:10px; letter-spacing:1.5px;
+    text-transform:uppercase; color:var(--sub); margin-bottom:4px; margin-top:12px; }
+  .settings-panel label:first-of-type { margin-top:0; }
+  .settings-panel input { width:100%; background:var(--bg-card2); border:1px solid var(--border);
+    color:var(--text); border-radius:10px; padding:9px 12px; font-size:14px; }
+  .settings-panel input:focus { outline:none; border-color:var(--heat); }
+  .settings-save { width:100%; margin-top:16px; background:var(--heat); color:#fff;
+    border:none; border-radius:12px; padding:12px; font-size:13px; font-weight:700;
+    letter-spacing:1px; cursor:pointer; }
+
+  /* history */
+  .time-btns { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+  .time-btn  { padding:6px 14px; border-radius:10px; font-size:11px; font-weight:600;
+    letter-spacing:1px; cursor:pointer; border:1px solid var(--border); color:var(--sub); background:transparent; }
+  .time-btn.active { background:var(--heat); border-color:var(--heat); color:#fff; }
+  .chart-wrap { background:var(--bg-card2); border-radius:14px; padding:14px;
+    margin-bottom:12px; border:1px solid var(--border); }
+  .chart-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--sub); margin-bottom:10px; }
+  .chart-wrap canvas { width:100% !important; }
+
+  .update-btn { width:100%; background:var(--bg-card2); border:1px solid var(--border);
+    color:var(--sub); border-radius:14px; padding:13px; font-size:12px; font-weight:600;
+    letter-spacing:2px; text-transform:uppercase; cursor:pointer; margin-top:4px; }
+  .update-btn:hover { border-color:var(--heat); color:var(--heat); }
+  .footer { text-align:center; font-size:11px; color:var(--sub); margin-top:20px; }
+
+  #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:var(--bg-card2); border:1px solid var(--border); color:var(--text);
+    padding:10px 20px; border-radius:12px; font-size:13px; opacity:0;
+    transition:opacity .3s; pointer-events:none; z-index:99; white-space:nowrap; }
+  #toast.show { opacity:1; }
+
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+</style>
+</head>
+<body>
+
+<div id="particles"></div>
+
+<div id="app">
+
+  <div class="hdr">
+    <div>
+      <div class="hdr-title">BControl</div>
+      <div class="hdr-sub">B-Control · EM300 Heizstab</div>
+    </div>
+    <button class="icon-btn" id="settingsBtn" onclick="toggleSettings()" title="Einstellungen">⚙</button>
+  </div>
+
+  <div class="settings-panel" id="settingsPanel" style="display:none">
+    <label>FHEM URL</label>
+    <input id="cfgFhemUrl" placeholder="/fhem" value="/fhem">
+    <label>FHEM Device-Name</label>
+    <input id="cfgDevice" placeholder="BControl_EnergyManager">
+    <label>DbLog Device-Name</label>
+    <input id="cfgDbLog" placeholder="DBLOG">
+    <button class="settings-save" onclick="saveSettings()">Speichern</button>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" id="tab-live" onclick="switchTab('live')">Live</div>
+    <div class="tab"        id="tab-hist" onclick="switchTab('hist')">Verlauf</div>
+  </div>
+
+  <div class="chips">
+    <div class="chip" id="chip-conn"><div class="chip-dot"></div><span id="chip-conn-txt">Verbinden…</span></div>
+    <div class="chip" id="chip-dev"><div class="chip-dot"></div><span id="chip-dev-txt">–</span></div>
+  </div>
+
+  <!-- ══════════════════ LIVE TAB ══════════════════ -->
+  <div class="tab-panel active" id="panel-live">
+
+    <!-- HEIZSTAB CARD -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon ci-heat">🔥</div>
+        <span class="card-title">Heizstab · Leistung</span>
+      </div>
+
+      <!-- heating coil visual -->
+      <div class="coil-outer" id="coil-outer">
+        <div class="coil-row">
+          <div class="coil-group" data-stage="1" id="coil-g1">
+            <div class="coil-seg"></div><div class="coil-seg"></div><div class="coil-seg"></div>
+          </div>
+          <div class="coil-divider"></div>
+          <div class="coil-group" data-stage="2" id="coil-g2">
+            <div class="coil-seg"></div><div class="coil-seg"></div><div class="coil-seg"></div>
+          </div>
+          <div class="coil-divider"></div>
+          <div class="coil-group" data-stage="3" id="coil-g3">
+            <div class="coil-seg"></div><div class="coil-seg"></div><div class="coil-seg"></div>
+          </div>
+        </div>
+        <div class="coil-labels">
+          <span>500 W</span><span>1000 W</span><span>2000 W</span>
+        </div>
+      </div>
+
+      <!-- stage rows -->
+      <div class="stage-row" id="stage-500">
+        <div class="stage-icon"><div class="b b-l"></div></div>
+        <div class="stage-info">
+          <div class="stage-w">500 W</div>
+          <div class="stage-lbl">Stufe 1</div>
+        </div>
+        <div class="stage-pill" id="pill-500">AUS</div>
+      </div>
+
+      <div class="stage-row" id="stage-1000">
+        <div class="stage-icon"><div class="b b-m"></div><div class="b b-l"></div></div>
+        <div class="stage-info">
+          <div class="stage-w">1000 W</div>
+          <div class="stage-lbl">Stufe 2</div>
+        </div>
+        <div class="stage-pill" id="pill-1000">AUS</div>
+      </div>
+
+      <div class="stage-row" id="stage-2000">
+        <div class="stage-icon"><div class="b b-s"></div><div class="b b-m"></div><div class="b b-l"></div></div>
+        <div class="stage-info">
+          <div class="stage-w">2000 W</div>
+          <div class="stage-lbl">Stufe 3</div>
+        </div>
+        <div class="stage-pill" id="pill-2000">AUS</div>
+      </div>
+
+      <!-- power bar + arc gauge -->
+      <div class="power-section">
+        <div class="pbar-track">
+          <div class="pbar-fill" id="pbar-fill" style="width:0%"></div>
+        </div>
+        <div class="pbar-labels">
+          <span>0 W</span><span>875</span><span>1750</span><span>2625</span><span>3500 W</span>
+        </div>
+
+        <div class="gauge-wrap">
+          <svg class="gauge-svg" viewBox="0 0 200 112">
+            <defs>
+              <filter id="arc-glow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="4" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <!-- track -->
+            <path d="M 20 100 A 80 80 0 0 1 180 100"
+              fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="12" stroke-linecap="round"/>
+            <!-- glow layer -->
+            <path id="arc-glow-path"
+              d="M 20 100 A 80 80 0 0 1 180 100"
+              fill="none" stroke="rgba(255,106,47,0.3)" stroke-width="18" stroke-linecap="round"
+              stroke-dasharray="0 252" filter="url(#arc-glow)"/>
+            <!-- fill layer -->
+            <path id="arc-fill"
+              d="M 20 100 A 80 80 0 0 1 180 100"
+              fill="none" stroke="#ff6a2f" stroke-width="12" stroke-linecap="round"
+              stroke-dasharray="0 252"/>
+          </svg>
+          <div class="gauge-center">
+            <div class="gauge-val zero" id="gauge-val">–</div>
+            <div class="gauge-unit" id="gauge-unit">W</div>
+            <div class="gauge-lbl">Gesamtleistung</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /heizstab card -->
+
+    <!-- BOILER CARD -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon ci-water">💧</div>
+        <span class="card-title">Boilertemperatur</span>
+      </div>
+      <div class="temp-row">
+        <div>
+          <div class="temp-big temp-ist" id="temp-ist">– °C</div>
+          <div class="temp-lbl">Ist</div>
+        </div>
+        <div style="text-align:right">
+          <div class="temp-big temp-soll" id="temp-soll-disp">– °C</div>
+          <div class="temp-lbl">Soll</div>
+        </div>
+      </div>
+      <div class="temp-bar-wrap">
+        <div class="temp-bar" id="temp-bar" style="width:0%"></div>
+      </div>
+      <div class="soll-input-row">
+        <input class="soll-input" type="number" id="soll-input" min="0" max="99" placeholder="60">
+        <button class="soll-btn" onclick="setSollTemp()">Setzen</button>
+      </div>
+    </div>
+
+    <!-- ENERGY METER (optional) -->
+    <div class="card" id="card-energy" style="display:none">
+      <div class="card-header">
+        <div class="card-icon ci-power">⚡</div>
+        <span class="card-title">Energiemessung</span>
+      </div>
+      <div class="card-sub" style="margin-bottom:8px">Wirkleistung</div>
+      <div class="phase-grid">
+        <div class="phase-card"><div class="phase-val" id="e-L1">–</div><div class="phase-lbl">L1 W</div></div>
+        <div class="phase-card"><div class="phase-val" id="e-L2">–</div><div class="phase-lbl">L2 W</div></div>
+        <div class="phase-card"><div class="phase-val" id="e-L3">–</div><div class="phase-lbl">L3 W</div></div>
+      </div>
+      <div class="card-sub" style="margin-top:12px;margin-bottom:8px">Spannung</div>
+      <div class="phase-grid">
+        <div class="phase-card"><div class="phase-val" id="v-L1">–</div><div class="phase-lbl">L1 V</div></div>
+        <div class="phase-card"><div class="phase-val" id="v-L2">–</div><div class="phase-lbl">L2 V</div></div>
+        <div class="phase-card"><div class="phase-val" id="v-L3">–</div><div class="phase-lbl">L3 V</div></div>
+      </div>
+    </div>
+
+    <button class="update-btn" onclick="fetchData()">↻ Aktualisieren</button>
+    <div class="footer" id="footer-ts">Stand: –</div>
+
+  </div><!-- /panel-live -->
+
+  <!-- ══════════════════ VERLAUF TAB ══════════════════ -->
+  <div class="tab-panel" id="panel-hist">
+    <div class="time-btns">
+      <button class="time-btn active" onclick="selectRange(6,this)">6 H</button>
+      <button class="time-btn"        onclick="selectRange(24,this)">24 H</button>
+      <button class="time-btn"        onclick="selectRange(168,this)">7 Tage</button>
+      <button class="time-btn"        onclick="selectRange(720,this)">30 Tage</button>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Heizstab · Leistung (W)</div>
+      <canvas id="chartHeat" height="140"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Boilertemperatur (°C)</div>
+      <canvas id="chartTemp" height="140"></canvas>
+    </div>
+  </div>
+
+</div><!-- /app -->
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script>
+'use strict';
+
+let fhemUrl    = localStorage.getItem('fhemUrl_bc')    || '/fhem';
+let deviceName = localStorage.getItem('deviceName_bc') || '';
+let dbLogName  = localStorage.getItem('dbLogName_bc')  || 'DBLOG';
+let histHours  = 6;
+let csrfToken  = '';
+
+function loadSettingsUI() {
+  document.getElementById('cfgFhemUrl').value = fhemUrl;
+  document.getElementById('cfgDevice').value  = deviceName;
+  document.getElementById('cfgDbLog').value   = dbLogName;
+}
+function saveSettings() {
+  fhemUrl    = document.getElementById('cfgFhemUrl').value.trim().replace(/\/+$/,'');
+  deviceName = document.getElementById('cfgDevice').value.trim();
+  dbLogName  = document.getElementById('cfgDbLog').value.trim();
+  localStorage.setItem('fhemUrl_bc',    fhemUrl);
+  localStorage.setItem('deviceName_bc', deviceName);
+  localStorage.setItem('dbLogName_bc',  dbLogName);
+  toggleSettings();
+  showToast('Einstellungen gespeichert');
+  fetchData();
+}
+function toggleSettings() {
+  const p = document.getElementById('settingsPanel');
+  const b = document.getElementById('settingsBtn');
+  const show = p.style.display === 'none';
+  p.style.display = show ? 'block' : 'none';
+  b.classList.toggle('active', show);
+  if (show) loadSettingsUI();
+}
+
+function switchTab(tab) {
+  ['live','hist'].forEach(t => {
+    document.getElementById('panel-'+t).classList.toggle('active', t===tab);
+    document.getElementById('tab-'+t).classList.toggle('active', t===tab);
+  });
+  if (tab === 'hist') loadCharts();
+}
+
+function csrfParam() { return csrfToken ? `&fwcsrf=${csrfToken}` : ''; }
+
+async function fetchCsrf() {
+  try {
+    const res = await fetch(`${fhemUrl}?XHR=1`, { mode:'cors' });
+    const t   = res.headers.get('X-FHEM-csrfToken');
+    if (t) csrfToken = t;
+  } catch(e) { /* token bleibt leer, kein CSRF-Schutz aktiv */ }
+}
+
+async function fhemGet(cmd) {
+  const r = await fetch(`${fhemUrl}?cmd=${encodeURIComponent(cmd)}&XHR=1${csrfParam()}`, { mode:'cors' });
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  return r.text();
+}
+
+async function fetchData() {
+  if (!deviceName) { setChip('conn', 'error', 'Kein Device'); return; }
+  try {
+    const txt = await fhemGet(`jsonlist2 ${deviceName}`);
+    const obj = JSON.parse(txt);
+    if (!obj.Results?.[0]) throw new Error('no result');
+    applyReadings(obj.Results[0].Readings || {});
+    setChip('conn', 'online', 'Verbunden');
+  } catch(e) {
+    setChip('conn', 'error', 'Fehler');
+    console.warn('fetchData:', e);
+  }
+}
+
+function rv(r, key, def='–') { return r[key]?.Value ?? def; }
+
+/* ── Arc gauge (semicircle, path length ≈ 252) ── */
+const ARC_MAX = 3500;
+const ARC_LEN = 251;
+
+function lerpColor(a, b, t) {
+  const h = s => parseInt(s.slice(1,3),16);
+  const rr = Math.round(h(a)   + t*(h(b)   - h(a)));
+  const gg = Math.round(parseInt(a.slice(3,5),16) + t*(parseInt(b.slice(3,5),16)-parseInt(a.slice(3,5),16)));
+  const bb = Math.round(parseInt(a.slice(5,7),16) + t*(parseInt(b.slice(5,7),16)-parseInt(a.slice(5,7),16)));
+  return `rgb(${rr},${gg},${bb})`;
+}
+
+function setGauge(watts) {
+  const pct  = Math.min(1, Math.max(0, watts / ARC_MAX));
+  const fill = ARC_LEN * pct;
+
+  document.getElementById('arc-fill')     .setAttribute('stroke-dasharray', `${fill} ${ARC_LEN}`);
+  document.getElementById('arc-glow-path').setAttribute('stroke-dasharray', `${fill} ${ARC_LEN}`);
+
+  const col = pct <= 0.5
+    ? lerpColor('#f5c400','#ff6a2f', pct * 2)
+    : lerpColor('#ff6a2f','#ff1744', (pct - 0.5) * 2);
+
+  document.getElementById('arc-fill').setAttribute('stroke', col);
+  document.getElementById('arc-glow-path').setAttribute('stroke',
+    col.replace('rgb(','rgba(').replace(')',',0.35)'));
+
+  const valEl  = document.getElementById('gauge-val');
+  const unitEl = document.getElementById('gauge-unit');
+  if (watts >= 1000) {
+    valEl.textContent  = (watts/1000).toFixed(2);
+    unitEl.textContent = 'kW';
+  } else {
+    valEl.textContent  = watts > 0 ? Math.round(watts) : '–';
+    unitEl.textContent = 'W';
+  }
+  valEl.classList.toggle('zero', watts === 0);
+}
+
+function applyReadings(r) {
+  const on500  = rv(r,'Heizstab_500W')  === 'on';
+  const on1000 = rv(r,'Heizstab_1000W') === 'on';
+  const on2000 = rv(r,'Heizstab_2000W') === 'on';
+  const anyOn  = on500 || on1000 || on2000;
+
+  setStage('stage-500',  'coil-g1', 'pill-500',  on500);
+  setStage('stage-1000', 'coil-g2', 'pill-1000', on1000);
+  setStage('stage-2000', 'coil-g3', 'pill-2000', on2000);
+  document.getElementById('coil-outer').classList.toggle('active', anyOn);
+
+  const totalW = parseFloat(rv(r,'Heizstab_Total_Watt','0')) || 0;
+  setGauge(totalW);
+  document.getElementById('pbar-fill').style.width =
+    Math.min(100, (totalW/ARC_MAX)*100).toFixed(1)+'%';
+
+  const ist  = parseFloat(rv(r,'Boilertemperatur_ist', '0'))  || 0;
+  const soll = parseFloat(rv(r,'Boilertemperatur_soll','60')) || 60;
+  document.getElementById('temp-ist').textContent       = ist.toFixed(1)  + ' °C';
+  document.getElementById('temp-soll-disp').textContent = soll.toFixed(1) + ' °C';
+  document.getElementById('soll-input').value = Math.round(soll);
+  const bar = document.getElementById('temp-bar');
+  bar.style.width      = Math.min(100,(ist/Math.max(soll,90))*100).toFixed(1)+'%';
+  bar.style.background = ist >= soll ? '#ff6a2f' : '#29b6f6';
+
+  // ── Staleness check: if lastUpdate is older than STALE_SEC, treat as offline ──
+  const STALE_SEC = 180;
+  const ts        = rv(r,'lastUpdate','');
+  const ageMs     = ts ? Date.now() - new Date(ts.replace(' ','T')).getTime() : Infinity;
+  const isStale   = ageMs > STALE_SEC * 1000;
+
+  const devState  = rv(r,'deviceState','–');
+  const fhemState = rv(r,'state','–');
+  const isOnline  = !isStale && devState === 'online';
+  const isOffline = isStale || devState === 'offline' || devState === 'unknown' || fhemState === 'heaterOffline';
+
+  if      (isOnline)  setChip('dev','online',  'Online');
+  else if (isOffline) setChip('dev','offline', 'Heizstab offline');
+  else                setChip('dev','error',   devState !== '–' ? devState : fhemState);
+
+  const hasEnergy = r['Power_L1'] || r['Voltage_L1'];
+  document.getElementById('card-energy').style.display = hasEnergy ? '' : 'none';
+  if (hasEnergy) {
+    ['L1','L2','L3'].forEach(ph => {
+      const pe = document.getElementById('e-'+ph);
+      const ve = document.getElementById('v-'+ph);
+      if (pe) pe.textContent = parseFloat(rv(r,'Power_'+ph,'–')).toFixed(0);
+      if (ve) ve.textContent = parseFloat(rv(r,'Voltage_'+ph,'–')).toFixed(1);
+    });
+  }
+
+  document.getElementById('footer-ts').textContent = ts
+    ? `Stand: ${ts}${isStale ? '  ·  Daten veraltet' : ''}` : '';
+}
+
+function setStage(rowId, coilId, pillId, isOn) {
+  document.getElementById(rowId).classList.toggle('on', isOn);
+  document.getElementById(coilId).classList.toggle('lit', isOn);
+  document.getElementById(pillId).textContent = isOn ? 'EIN' : 'AUS';
+}
+
+function setChip(id, state, txt) {
+  const el = document.getElementById('chip-'+id);
+  el.classList.remove('active','warn','offline');
+  if      (state === 'online')  el.classList.add('active');
+  else if (state === 'offline') el.classList.add('offline');
+  else if (state === 'error')   el.classList.add('warn');
+  document.getElementById('chip-'+id+'-txt').textContent = txt;
+}
+
+async function setSollTemp() {
+  const t = parseFloat(document.getElementById('soll-input').value);
+  if (isNaN(t)||t<0||t>99) { showToast('Ungültige Temperatur (0–99)'); return; }
+  if (!deviceName) { showToast('Kein Device konfiguriert'); return; }
+  try {
+    await fhemGet(`set ${deviceName} Boilertemperatur_soll ${t}`);
+    showToast(`Solltemperatur: ${t} °C gesetzt`);
+    setTimeout(fetchData, 2000);
+  } catch(e) { showToast('Fehler beim Setzen'); }
+}
+
+/* ── History charts ── */
+let chartHeat=null, chartTemp=null;
+
+function selectRange(h,btn) {
+  histHours = h;
+  document.querySelectorAll('.time-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  loadCharts();
+}
+
+async function fetchDbLog(reading, hours) {
+  const now  = new Date();
+  const from = new Date(now - hours*3600000);
+  const fmt  = d => d.toISOString().replace('T',' ').slice(0,19);
+  try {
+    const txt = await fhemGet(`get ${dbLogName} - - ${fmt(from)} ${fmt(now)} ${deviceName}:${reading}:`);
+    return txt.trim().split('\n').filter(l=>l.includes(' ')).map(l=>{
+      const [ts,v] = l.trim().split(' ');
+      return { x:new Date(ts.replace('_',' ')), y:parseFloat(v) };
+    }).filter(p=>!isNaN(p.y));
+  } catch { return []; }
+}
+
+const chartCfg = (datasets) => ({
+  type:'line',
+  data:{ datasets },
+  options:{
+    animation:false, responsive:true,
+    scales:{
+      x:{ type:'time', time:{ tooltipFormat:'dd.MM. HH:mm' },
+        ticks:{ color:'rgba(180,200,220,.4)', maxTicksLimit:6, font:{size:10} },
+        grid:{ color:'rgba(255,255,255,.04)' } },
+      y:{ ticks:{ color:'rgba(180,200,220,.4)', font:{size:10} },
+        grid:{ color:'rgba(255,255,255,.04)' } }
+    },
+    plugins:{ legend:{ labels:{ color:'rgba(180,200,220,.55)', font:{size:11} } } }
+  }
+});
+
+async function loadCharts() {
+  const [hData,iData,sData] = await Promise.all([
+    fetchDbLog('Heizstab_Total_Watt',   histHours),
+    fetchDbLog('Boilertemperatur_ist',  histHours),
+    fetchDbLog('Boilertemperatur_soll', histHours),
+  ]);
+  if (chartHeat) { chartHeat.destroy(); chartHeat=null; }
+  if (chartTemp) { chartTemp.destroy(); chartTemp=null; }
+
+  chartHeat = new Chart(document.getElementById('chartHeat'), chartCfg([{
+    label:'Heizstab W', data:hData, borderColor:'#ff6a2f',
+    backgroundColor:'rgba(255,106,47,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3
+  }]));
+
+  chartTemp = new Chart(document.getElementById('chartTemp'), chartCfg([
+    { label:'Ist °C',  data:iData, borderColor:'#29b6f6',
+      backgroundColor:'rgba(41,182,246,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3 },
+    { label:'Soll °C', data:sData, borderColor:'#ff6a2f',
+      backgroundColor:'transparent',         fill:false, pointRadius:0, borderWidth:1.5, tension:0, borderDash:[5,4] }
+  ]));
+}
+
+/* ── Particles ── */
+function initParticles() {
+  const c = document.getElementById('particles');
+  for (let i=0; i<22; i++) {
+    const d = document.createElement('div');
+    d.className = 'particle';
+    const sz = 2 + Math.random()*4;
+    d.style.cssText = `width:${sz}px;height:${sz}px;left:${Math.random()*100}%;top:${Math.random()*100}%;`
+      + `background:hsl(${15+Math.random()*20},90%,60%);`
+      + `animation-delay:${Math.random()*15}s;animation-duration:${14+Math.random()*12}s;`;
+    c.appendChild(d);
+  }
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 3000);
+}
+
+initParticles();
+loadSettingsUI();
+fetchCsrf().then(() => { if (deviceName) fetchData(); });
+</script>
+</body>
+</html>
