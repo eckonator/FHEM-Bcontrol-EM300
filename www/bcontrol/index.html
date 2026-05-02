@@ -555,7 +555,7 @@ function saveSettings() {
   localStorage.setItem('dbLogName_bc',  dbLogName);
   toggleSettings();
   showToast('Einstellungen gespeichert');
-  fetchData();
+  startPoll();
 }
 function toggleSettings() {
   const p = document.getElementById('settingsPanel');
@@ -791,9 +791,18 @@ function showToast(msg) {
   toastTimer = setTimeout(()=>t.classList.remove('show'), 3000);
 }
 
+let pollHandle = null;
+
+function startPoll() {
+  if (!deviceName) return;
+  fetchData();
+  clearInterval(pollHandle);
+  pollHandle = setInterval(fetchData, 20000);
+}
+
 initParticles();
 loadSettingsUI();
-fetchCsrf().then(() => { if (deviceName) fetchData(); });
+fetchCsrf().then(startPoll);
 </script>
 </body>
 </html>
