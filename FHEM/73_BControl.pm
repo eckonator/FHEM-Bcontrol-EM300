@@ -1,13 +1,11 @@
 ################################################################################
-# $Id: 73_BControl.pm 00001 2026-05-01 00:00:00Z markus $
+# $Id: 73_BControl.pm 00002 2026-05-02 00:00:00Z markus $
 #
 # FHEM module for B-Control EM300 energy manager / Heizstab controller
 # Fetches sensor data directly via the device's local HTTP API.
 #
-# Replaces: HTTPMOD + DOIF + AT setup from bcontrol.cfg
-# Backward-compatible: all previous reading names are preserved.
-#
-# API: POST /start.php (cookie login) + GET /mum-webservice/unieq.php
+# API: POST /start.php (cookie login)
+#      GET  /mum-webservice/consumption.php?meter_id=<n>
 #
 # by Markus Eckert https://github.com/eckonator/
 #
@@ -28,9 +26,12 @@ use Time::HiRes qw(gettimeofday);
 use POSIX       qw(strftime);
 use URI::Escape qw(uri_escape);
 
-my $BC_VERSION     = "1.0.0";
-my $BC_DATA_PATH   = '/mum-webservice/unieq.php?method=GET&identifier=remaked&context=sensor';
-my $BC_LOGIN_PATH  = '/start.php';
+my $BC_VERSION    = "2.0.0";
+my $BC_LOGIN_PATH = '/start.php';
+
+# meter_id → JSON key prefix: meter_id=4 → "05_" (meter_id+1, zero-padded)
+sub BC_Prefix { return sprintf('%02d_', ($_[0] // 4) + 1) }
+sub BC_DataPath { return '/mum-webservice/consumption.php?meter_id=' . ($_[0] // 4) }
 
 ################################################################################
 # Initialize
@@ -60,15 +61,19 @@ sub BControl_Initialize {
 sub BControl_Define {
     my ($hash, $def) = @_;
     my @a = split /\s+/, $def;
-    return "Usage: define <name> BControl <ip> [<port>]" if @a < 3;
+    return "Usage: define <name> BControl <ip> <meter_id> [<port>]" if @a < 4;
 
-    my $name = $a[0];
-    my $ip   = $a[2];
-    my $port = $a[3] // 80;
+    my $name     = $a[0];
+    my $ip       = $a[2];
+    my $meter_id = $a[3];
+    my $port     = $a[4] // 80;
 
-    $hash->{IP}      = $ip;
-    $hash->{PORT}    = $port;
-    $hash->{VERSION} = $BC_VERSION;
+    return "meter_id must be a number" unless $meter_id =~ /^\d+$/;
+
+    $hash->{IP}       = $ip;
+    $hash->{METER_ID} = $meter_id;
+    $hash->{PORT}     = $port;
+    $hash->{VERSION}  = $BC_VERSION;
 
     RemoveInternalTimer($hash);
 
@@ -85,7 +90,7 @@ sub BControl_Define {
 }
 
 ################################################################################
-# Undef
+# Undef / Delete
 ################################################################################
 
 sub BControl_Undef {
@@ -93,10 +98,6 @@ sub BControl_Undef {
     RemoveInternalTimer($hash);
     return;
 }
-
-################################################################################
-# Delete – remove stored password
-################################################################################
 
 sub BControl_Delete {
     my ($hash, $name) = @_;
@@ -140,15 +141,7 @@ sub BControl_Set {
         return;
     }
 
-    if ($cmd eq 'Boilertemperatur_soll') {
-        return "Usage: set $name Boilertemperatur_soll <Grad>" unless @args;
-        my $val = $args[0];
-        return "Invalid temperature (0-99)" unless $val =~ /^\d+(\.\d+)?$/ && $val >= 0 && $val <= 99;
-        BControl_SetTemperature($hash, $val);
-        return;
-    }
-
-    my @opts = qw(password nopassword:noArg update:noArg relogin:noArg Boilertemperatur_soll);
+    my @opts = qw(password nopassword:noArg update:noArg relogin:noArg);
     return "Unknown argument $cmd, choose one of " . join(' ', @opts);
 }
 
@@ -188,8 +181,7 @@ sub BControl_Attr {
     }
     if ($attr eq 'interval' && $cmd eq 'set') {
         RemoveInternalTimer($hash, \&BControl_UpdateData);
-        InternalTimer(gettimeofday() + ($val // 60),
-            \&BControl_UpdateData, $hash);
+        InternalTimer(gettimeofday() + ($val // 60), \&BControl_UpdateData, $hash);
     }
     return;
 }
@@ -198,18 +190,13 @@ sub BControl_Attr {
 # Internal helpers
 ################################################################################
 
-# Set readings when device is unreachable (no power / network down)
 sub BC_SetOfflineReadings {
     my ($hash, $err, $code) = @_;
     if (!$code || $code == 0) {
-        # No HTTP response at all → device is off (inverter cut power)
         readingsBeginUpdate($hash);
-        readingsBulkUpdate($hash, 'deviceState',        'offline');
-        readingsBulkUpdate($hash, 'Heizstab_500W',       'off');
-        readingsBulkUpdate($hash, 'Heizstab_1000W',      'off');
-        readingsBulkUpdate($hash, 'Heizstab_2000W',      'off');
-        readingsBulkUpdate($hash, 'Heizstab_Total_Watt', '0');
-        readingsBulkUpdate($hash, 'state',               'heaterOffline');
+        readingsBulkUpdate($hash, 'deviceState', 'offline');
+        readingsBulkUpdate($hash, 'power_W',     '0');
+        readingsBulkUpdate($hash, 'state',       'heaterOffline');
         readingsEndUpdate($hash, 1);
     } else {
         readingsSingleUpdate($hash, 'state', "error: HTTP $code", 1);
@@ -225,7 +212,7 @@ sub BC_BaseURL {
 
 sub BC_Headers {
     my ($hash) = @_;
-    my $h = "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json";
+    my $h = "Accept: application/json";
     $h   .= "\r\nCookie: " . $hash->{'.cookie'} if $hash->{'.cookie'};
     return $h;
 }
@@ -249,7 +236,6 @@ sub BC_ScheduleUpdate {
     InternalTimer(gettimeofday() + $delay, \&BControl_UpdateData, $hash);
 }
 
-# Parse the first usable Set-Cookie value from response headers
 sub BC_ParseCookie {
     my ($headers) = @_;
     return undef unless defined $headers;
@@ -260,7 +246,7 @@ sub BC_ParseCookie {
 }
 
 ################################################################################
-# Login – POST /start.php to obtain session cookie
+# Login – POST /start.php
 ################################################################################
 
 sub BControl_Login {
@@ -281,15 +267,13 @@ sub BControl_Login {
     Log3($name, 4, "$name: BControl login – POST $BC_LOGIN_PATH");
     readingsSingleUpdate($hash, 'state', 'connecting', 1);
 
-    my $body = 'password=' . uri_escape($pw);
-
     HttpUtils_NonblockingGet({
         url      => BC_BaseURL($hash) . $BC_LOGIN_PATH,
         timeout  => 15,
         hash     => $hash,
         method   => 'POST',
         header   => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json",
-        data     => $body,
+        data     => 'password=' . uri_escape($pw),
         callback => \&BControl_LoginCb,
     });
 }
@@ -307,29 +291,21 @@ sub BControl_LoginCb {
         return;
     }
 
-    # Parse session cookie from response headers
     my $cookie = BC_ParseCookie($param->{httpheader});
     if (!$cookie) {
-        # Some B-Control firmware versions return no cookie but accept requests anyway
         Log3($name, 4, "$name: no Set-Cookie in login response – proceeding without cookie");
+        $hash->{'.cookie'} = '';
     } else {
         $hash->{'.cookie'} = $cookie;
         Log3($name, 4, "$name: session cookie obtained");
     }
 
-    # Check if login JSON confirms authentication
     my $json;
     eval { $json = JSON->new->utf8->decode($data) if $data && $data =~ /^\{/; };
     if ($json && defined $json->{authentication} && !$json->{authentication}) {
-        Log3($name, 1, "$name: authentication rejected by device – wrong password?");
+        Log3($name, 1, "$name: authentication rejected – wrong password?");
         readingsSingleUpdate($hash, 'state', 'login error: wrong password', 1);
         return;
-    }
-
-    # Store serial / version if provided at login
-    if ($json) {
-        $hash->{SERIAL}      = $json->{serial}      if $json->{serial};
-        $hash->{APP_VERSION} = $json->{app_version} if $json->{app_version};
     }
 
     Log3($name, 3, "$name: login successful");
@@ -337,7 +313,7 @@ sub BControl_LoginCb {
 }
 
 ################################################################################
-# UpdateData – GET sensor endpoint
+# UpdateData – GET consumption endpoint
 ################################################################################
 
 sub BControl_UpdateData {
@@ -347,15 +323,16 @@ sub BControl_UpdateData {
     return if BC_IsDisabled($hash);
     RemoveInternalTimer($hash, \&BControl_UpdateData);
 
-    unless ($hash->{'.cookie'}) {
+    unless (defined $hash->{'.cookie'}) {
         BControl_Login($hash);
         return;
     }
 
-    Log3($name, 5, "$name: fetching sensor data");
+    my $url = BC_BaseURL($hash) . BC_DataPath($hash->{METER_ID});
+    Log3($name, 5, "$name: fetching $url");
 
     HttpUtils_NonblockingGet({
-        url      => BC_BaseURL($hash) . $BC_DATA_PATH,
+        url      => $url,
         timeout  => 15,
         hash     => $hash,
         method   => 'GET',
@@ -383,13 +360,12 @@ sub BControl_UpdateDataCb {
     my $json;
     eval { $json = JSON->new->utf8->decode($data); };
     if ($@ || ref($json) ne 'HASH') {
-        Log3($name, 2, "$name: JSON parse error: $@");
+        Log3($name, 2, "$name: JSON parse error: $@  data=[$data]");
         readingsSingleUpdate($hash, 'state', 'json error', 1);
         BC_ScheduleUpdate($hash);
         return;
     }
 
-    # Re-auth check
     if (defined $json->{authentication} && !$json->{authentication}) {
         Log3($name, 3, "$name: session expired – re-login");
         $hash->{'.cookie'} = undef;
@@ -402,150 +378,115 @@ sub BControl_UpdateDataCb {
 }
 
 ################################################################################
-# WriteReadings – map JSON keys → FHEM readings
+# WriteReadings – map JSON → FHEM readings
+#
+# JSON structure (consumption.php?meter_id=4, prefix "05_"):
+#   authentication, meter_id, is_smartheater
+#   05_power         – current power in kW
+#   05_energy        – total energy in kWh
+#   05_status        – 0 = OK
+#   05_meter_label   – device description
+#   05_meter_number  – meter serial
+#   sum_power        – total power of all meters [kW]
+#   registers        – array: [{register, value}, ...]
+#                      "1-0:1.4.0*255" = active power [W]
+#                      "1-0:1.8.0*255" = total energy [Wh]
 ################################################################################
 
 sub BC_WriteReadings {
     my ($hash, $j) = @_;
-    my $name = $hash->{NAME};
+    my $name   = $hash->{NAME};
+    my $mid    = $hash->{METER_ID};
+    my $prefix = BC_Prefix($mid);          # e.g. "05_"
 
-    # Helper: value or default
-    my $v = sub { defined $j->{$_[0]} ? $j->{$_[0]} : ($_[1] // '') };
+    # Pull active-power register value [W] – most accurate source
+    my $power_w = undef;
+    my $energy_wh = undef;
+    if (ref($j->{registers}) eq 'ARRAY') {
+        for my $reg (@{$j->{registers}}) {
+            if (($reg->{register} // '') =~ /1-0:1\.4\.0/) {
+                $power_w   = $reg->{value};
+            }
+            if (($reg->{register} // '') =~ /1-0:1\.8\.0/) {
+                $energy_wh = $reg->{value};
+            }
+        }
+    }
+    # Fallback: 05_power is in kW
+    $power_w //= ($j->{"${prefix}power"} // 0) * 1000;
+
+    my $status     = $j->{"${prefix}status"}       // -1;
+    my $energy_kwh = $j->{"${prefix}energy"}        // 0;
+    my $label      = $j->{"${prefix}meter_label"}   // '';
+    my $meter_nr   = $j->{"${prefix}meter_number"}  // '';
+    my $is_heater  = $j->{is_smartheater}           ? 1 : 0;
+
+    # status=0 means OK/online for the smart heater
+    my $dev_state  = ($status == 0) ? 'online' : "status_$status";
 
     readingsBeginUpdate($hash);
 
-    # ── Backward-compatible readings (identical to previous HTTPMOD setup) ────
-    readingsBulkUpdate($hash, 'Heizstab_500W',          $v->('meters_01_switches_01_state', 'off'));
-    readingsBulkUpdate($hash, 'Heizstab_1000W',         $v->('meters_01_switches_02_state', 'off'));
-    readingsBulkUpdate($hash, 'Heizstab_2000W',         $v->('meters_01_switches_03_state', 'off'));
-    readingsBulkUpdate($hash, 'Heizstab_Total_Watt',    $v->('meters_01_registers_01_value', '0'));
-    readingsBulkUpdate($hash, 'Boilertemperatur_ist',   $v->('meters_01_temperatur_boiler',  '0'));
-    readingsBulkUpdate($hash, 'Boilertemperatur_soll',  $v->('meters_01_user_temperatur_nominal', '0'));
+    readingsBulkUpdate($hash, 'deviceState',   $dev_state);
+    readingsBulkUpdate($hash, 'power_W',       sprintf('%.0f', $power_w));
+    readingsBulkUpdate($hash, 'energy_kWh',    sprintf('%.3f', $energy_kwh));
+    readingsBulkUpdate($hash, 'meter_status',  $status);
+    readingsBulkUpdate($hash, 'is_smartheater', $is_heater);
+    readingsBulkUpdate($hash, 'meter_label',   $label)     if $label;
+    readingsBulkUpdate($hash, 'meter_number',  $meter_nr)  if $meter_nr;
 
-    # ── Device state ──────────────────────────────────────────────────────────
-    my $dev_state = $v->('meters_01_state', 'unknown');
-    readingsBulkUpdate($hash, 'deviceState', $dev_state);
-
-    # ── Extended power meter readings (EM300 energy measurement) ─────────────
-    # Active power per phase + total [W]
-    for my $suffix (qw(total L1 L2 L3)) {
-        my $key = "meters_01_total_active_power_$suffix";
-        $key    = "meters_01_total_active_power" if $suffix eq 'total';
-        readingsBulkUpdate($hash, "Power_$suffix", sprintf('%.2f', $v->($key, 0)))
-            if defined $j->{$key};
+    if (defined $energy_wh) {
+        readingsBulkUpdate($hash, 'energy_Wh', sprintf('%.3f', $energy_wh));
     }
 
-    # Voltage per phase [V]
-    for my $ph (1..3) {
-        my $key = "meters_01_voltage_L${ph}N";
-        readingsBulkUpdate($hash, "Voltage_L$ph", sprintf('%.2f', $v->($key, 0)))
-            if defined $j->{$key};
-    }
-
-    # Current per phase [A]
-    for my $ph (1..3) {
-        my $key = "meters_01_current_L$ph";
-        readingsBulkUpdate($hash, "Current_L$ph", sprintf('%.3f', $v->($key, 0)))
-            if defined $j->{$key};
-    }
-
-    # Frequency [Hz] and Power Factor
-    readingsBulkUpdate($hash, 'Frequency',    sprintf('%.2f', $v->('meters_01_frequency', 0)))
-        if defined $j->{'meters_01_frequency'};
-    readingsBulkUpdate($hash, 'PowerFactor',  sprintf('%.3f', $v->('meters_01_power_factor', 0)))
-        if defined $j->{'meters_01_power_factor'};
-
-    # Total energy [Wh → kWh]
-    for my $key (grep { /total_energy/ } keys %$j) {
-        my $rname = $key;
-        $rname =~ s/^meters_01_//;
-        $rname =~ s/[^a-zA-Z0-9_]/_/g;
-        readingsBulkUpdate($hash, $rname, sprintf('%.3f', ($j->{$key} // 0) / 1000));
-    }
+    # Tariff / cost info
+    readingsBulkUpdate($hash, 'tariff',          $j->{"${prefix}tariff"}          // '')
+        if defined $j->{"${prefix}tariff"};
+    readingsBulkUpdate($hash, 'tariff_currency', $j->{"${prefix}tariff_currency"} // '')
+        if defined $j->{"${prefix}tariff_currency"};
 
     my $ts = strftime('%Y-%m-%d %H:%M:%S', localtime());
     readingsBulkUpdate($hash, 'lastUpdate', $ts);
 
     readingsEndUpdate($hash, 1);
 
-    # ── State string ──────────────────────────────────────────────────────────
-    my $total_w = $v->('meters_01_registers_01_value',       '0');
-    my $b_ist   = $v->('meters_01_temperatur_boiler',        '0');
-    my $b_soll  = $v->('meters_01_user_temperatur_nominal',  '0');
-    my $sw500   = $v->('meters_01_switches_01_state',        'off');
-    my $sw1000  = $v->('meters_01_switches_02_state',        'off');
-    my $sw2000  = $v->('meters_01_switches_03_state',        'off');
-
+    # State string
     my $state = ($dev_state eq 'online')
-        ? "Verbrauch: $total_w W | Boilertemp. Soll: $b_soll °C | "
-          . "Boilertemp. Ist: $b_ist °C | "
-          . "Heizer 500 W: $sw500 | Heizer 1000 W: $sw1000 | Heizer 2000 W: $sw2000"
-        : 'heaterOffline';
-
+        ? "online | ${power_w} W | ${energy_kwh} kWh"
+        : "heaterOffline ($dev_state)";
     readingsSingleUpdate($hash, 'state', $state, 1);
 
     $hash->{API_LAST_RES} = int(gettimeofday());
     my $interval = AttrVal($name, 'interval', 60);
     $hash->{NEXT}   = FmtDateTime(gettimeofday() + $interval);
-    $hash->{SOURCE} = BC_BaseURL($hash) . $BC_DATA_PATH;
+    $hash->{SOURCE} = BC_BaseURL($hash) . BC_DataPath($mid);
 
-    Log3($name, 5, "$name: readings updated – deviceState=$dev_state Heizstab=${total_w}W Boiler=${b_ist}°C/${b_soll}°C");
+    Log3($name, 4, "$name: readings updated – $dev_state ${power_w}W ${energy_kwh}kWh");
 }
 
 ################################################################################
-# SetTemperature – write nominal boiler temperature
-################################################################################
-
-sub BControl_SetTemperature {
-    my ($hash, $temp) = @_;
-    my $name = $hash->{NAME};
-
-    # Try the SET endpoint first; fall back to POST with JSON body if needed
-    my $url  = BC_BaseURL($hash) .
-               '/mum-webservice/unieq.php?method=SET&identifier=remaked&context=sensor';
-
-    Log3($name, 3, "$name: setting Boilertemperatur_soll = $temp");
-
-    HttpUtils_NonblockingGet({
-        url      => $url,
-        timeout  => 10,
-        hash     => $hash,
-        method   => 'POST',
-        header   => "Content-Type: application/json\r\nAccept: application/json"
-                  . "\r\nCookie: " . ($hash->{'.cookie'} // ''),
-        data     => JSON->new->utf8->encode(
-                        { meters_01_user_temperatur_nominal => "$temp" }
-                    ),
-        callback => sub {
-            my ($p, $e, $d) = @_;
-            my $c = $p->{code} // 0;
-            if ($e || ($c >= 400 && $c != 0)) {
-                Log3($name, 2, "$name: SetTemperature failed (HTTP $c): " . ($e // ''));
-            } else {
-                Log3($name, 3, "$name: SetTemperature OK ($temp °C)");
-                readingsSingleUpdate($hash, 'Boilertemperatur_soll', $temp, 1);
-            }
-        },
-    });
-}
-
-################################################################################
-# GetRaw – fetch raw JSON for debugging
+# GetRaw – raw JSON dump for debugging
 ################################################################################
 
 sub BControl_GetRaw {
     my ($hash) = @_;
     my $name = $hash->{NAME};
+    my $url  = BC_BaseURL($hash) . BC_DataPath($hash->{METER_ID});
+
+    Log3($name, 1, "$name: GetRaw URL   : $url");
+    Log3($name, 1, "$name: GetRaw cookie: " . ($hash->{'.cookie'} // '(undef)'));
 
     HttpUtils_NonblockingGet({
-        url      => BC_BaseURL($hash) . $BC_DATA_PATH,
+        url      => $url,
         timeout  => 15,
         hash     => $hash,
         method   => 'GET',
         header   => BC_Headers($hash),
         callback => sub {
             my ($p, $e, $d) = @_;
-            Log3($name, 1, "$name: RAW response: " . ($e // $d // '(empty)'));
+            my $code = $p->{code} // 'n/a';
+            Log3($name, 1, "$name: GetRaw HTTP  : $code");
+            Log3($name, 1, "$name: GetRaw ERR   : $e") if $e;
+            Log3($name, 1, "$name: GetRaw BODY  : " . (defined $d && $d ne '' ? $d : '(empty)'));
         },
     });
 }
@@ -554,75 +495,66 @@ sub BControl_GetRaw {
 
 =pod
 =item device
-=item summary FHEM module for B-Control EM300 energy manager / Heizstab controller
-=item summary_DE FHEM-Modul für den B-Control EM300 Energiemanager / Heizstab
+=item summary FHEM module for B-Control EM300 Smart Heater
+=item summary_DE FHEM-Modul für den B-Control EM300 Smart Heater
 
 =begin html
 
 <a name="BControl"></a>
 <h3>BControl</h3>
 
-<p>Fetches sensor data from a <b>B-Control EM300</b> energy manager directly
-via its local HTTP API. Replaces the previous <code>HTTPMOD + DOIF + AT</code>
-setup with a single native module.</p>
-
-<p>All previous reading names are preserved so that existing DbLog definitions
-and SVG plots continue to work without any changes.</p>
-
-<p><b>Requirements:</b> only standard Perl modules (<code>JSON</code>,
-<code>URI::Escape</code>) and FHEM's built-in <code>HttpUtils</code>.</p>
+<p>Reads live data from a <b>B-Control EM300</b> smart heater via its local
+HTTP API (<code>/mum-webservice/consumption.php</code>).</p>
 
 <a name="BControldefine"></a>
 <b>Define</b>
 <ul>
-  <code>define &lt;name&gt; BControl &lt;ip&gt; [&lt;port&gt;]</code><br><br>
+  <code>define &lt;name&gt; BControl &lt;ip&gt; &lt;meter_id&gt; [&lt;port&gt;]</code><br><br>
   <table>
-    <tr><td><code>ip</code></td><td>IP address or hostname of the B-Control device</td></tr>
+    <tr><td><code>ip</code></td><td>IP address of the B-Control device</td></tr>
+    <tr><td><code>meter_id</code></td><td>Meter ID as shown in the B-Control web UI (e.g. 4)</td></tr>
     <tr><td><code>port</code></td><td>HTTP port (default: 80)</td></tr>
   </table>
+  <br>Example: <code>define Heizstab BControl 192.168.178.115 4</code>
 </ul>
 
 <a name="BControlset"></a>
 <b>Set</b>
 <ul>
-  <li><code>password &lt;pw&gt;</code> &ndash; store password encrypted and trigger login</li>
-  <li><code>nopassword</code> &ndash; configure login without a password (B-Control WebGUI: "Anmeldung ohne Kennwort")</li>
+  <li><code>password &lt;pw&gt;</code> &ndash; store password and trigger login</li>
+  <li><code>nopassword</code> &ndash; login without password</li>
   <li><code>update</code> &ndash; immediate data refresh</li>
   <li><code>relogin</code> &ndash; reset session and re-authenticate</li>
-  <li><code>Boilertemperatur_soll &lt;°C&gt;</code> &ndash; set nominal boiler temperature (0–99 °C)</li>
 </ul>
 
 <a name="BControlget"></a>
 <b>Get</b>
 <ul>
   <li><code>update</code> &ndash; immediate data refresh</li>
-  <li><code>raw</code> &ndash; dump raw JSON response to FHEM log (debug)</li>
+  <li><code>raw</code> &ndash; dump raw JSON to FHEM log (verbose 1)</li>
 </ul>
 
 <a name="BControlattr"></a>
 <b>Attributes</b>
 <ul>
   <li><code>interval</code> &ndash; poll interval in seconds (default: 60)</li>
-  <li><code>port</code> &ndash; HTTP port override (default: 80)</li>
-  <li><code>disable</code> &ndash; disable all polling (1/0)</li>
-  <li><code>disabledForIntervals</code> &ndash; pause polling in time ranges, e.g. <code>00:00-06:00</code></li>
+  <li><code>port</code> &ndash; HTTP port override</li>
+  <li><code>disable</code> &ndash; disable polling</li>
+  <li><code>disabledForIntervals</code> &ndash; pause polling in time ranges</li>
 </ul>
 
 <a name="BControlreadings"></a>
 <b>Readings</b>
 <ul>
-  <li><code>Heizstab_500W</code> &ndash; 500 W stage state (on/off)</li>
-  <li><code>Heizstab_1000W</code> &ndash; 1000 W stage state (on/off)</li>
-  <li><code>Heizstab_2000W</code> &ndash; 2000 W stage state (on/off)</li>
-  <li><code>Heizstab_Total_Watt</code> &ndash; total heater power (W)</li>
-  <li><code>Boilertemperatur_ist</code> &ndash; current boiler temperature (°C)</li>
-  <li><code>Boilertemperatur_soll</code> &ndash; target boiler temperature (°C)</li>
-  <li><code>deviceState</code> &ndash; device state from meters_01_state (online/offline)</li>
-  <li><code>Power_L1 / L2 / L3 / total</code> &ndash; active power per phase and total (W)</li>
-  <li><code>Voltage_L1 / L2 / L3</code> &ndash; phase voltage (V)</li>
-  <li><code>Current_L1 / L2 / L3</code> &ndash; phase current (A)</li>
-  <li><code>Frequency</code> &ndash; grid frequency (Hz)</li>
-  <li><code>PowerFactor</code> &ndash; power factor</li>
+  <li><code>power_W</code> &ndash; current power consumption (W)</li>
+  <li><code>energy_kWh</code> &ndash; total energy (kWh)</li>
+  <li><code>energy_Wh</code> &ndash; total energy (Wh, from register)</li>
+  <li><code>deviceState</code> &ndash; online / status_N</li>
+  <li><code>meter_status</code> &ndash; raw status value (0 = OK)</li>
+  <li><code>is_smartheater</code> &ndash; 1 if device identifies as smart heater</li>
+  <li><code>meter_label</code> &ndash; device description</li>
+  <li><code>meter_number</code> &ndash; meter serial number</li>
+  <li><code>tariff</code> &ndash; current tariff (EUR/kWh)</li>
   <li><code>lastUpdate</code> &ndash; timestamp of last successful fetch</li>
 </ul>
 

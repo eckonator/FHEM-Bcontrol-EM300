@@ -485,49 +485,23 @@
       </div>
     </div><!-- /heizstab card -->
 
-    <!-- BOILER CARD -->
+    <!-- ENERGIE CARD -->
     <div class="card">
       <div class="card-header">
-        <div class="card-icon ci-water">💧</div>
-        <span class="card-title">Boilertemperatur</span>
-      </div>
-      <div class="temp-row">
-        <div>
-          <div class="temp-big temp-ist" id="temp-ist">– °C</div>
-          <div class="temp-lbl">Ist</div>
-        </div>
-        <div style="text-align:right">
-          <div class="temp-big temp-soll" id="temp-soll-disp">– °C</div>
-          <div class="temp-lbl">Soll</div>
-        </div>
-      </div>
-      <div class="temp-bar-wrap">
-        <div class="temp-bar" id="temp-bar" style="width:0%"></div>
-      </div>
-      <div class="soll-input-row">
-        <input class="soll-input" type="number" id="soll-input" min="0" max="99" placeholder="60">
-        <button class="soll-btn" onclick="setSollTemp()">Setzen</button>
-      </div>
-    </div>
-
-    <!-- ENERGY METER (optional) -->
-    <div class="card" id="card-energy" style="display:none">
-      <div class="card-header">
         <div class="card-icon ci-power">⚡</div>
-        <span class="card-title">Energiemessung</span>
+        <span class="card-title">Energie &amp; Kosten</span>
       </div>
-      <div class="card-sub" style="margin-bottom:8px">Wirkleistung</div>
-      <div class="phase-grid">
-        <div class="phase-card"><div class="phase-val" id="e-L1">–</div><div class="phase-lbl">L1 W</div></div>
-        <div class="phase-card"><div class="phase-val" id="e-L2">–</div><div class="phase-lbl">L2 W</div></div>
-        <div class="phase-card"><div class="phase-val" id="e-L3">–</div><div class="phase-lbl">L3 W</div></div>
+      <div class="phase-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="phase-card">
+          <div class="phase-val" id="e-kwh" style="font-size:22px">–</div>
+          <div class="phase-lbl">Gesamt kWh</div>
+        </div>
+        <div class="phase-card">
+          <div class="phase-val" id="e-tariff" style="font-size:22px">–</div>
+          <div class="phase-lbl">Tarif ct/kWh</div>
+        </div>
       </div>
-      <div class="card-sub" style="margin-top:12px;margin-bottom:8px">Spannung</div>
-      <div class="phase-grid">
-        <div class="phase-card"><div class="phase-val" id="v-L1">–</div><div class="phase-lbl">L1 V</div></div>
-        <div class="phase-card"><div class="phase-val" id="v-L2">–</div><div class="phase-lbl">L2 V</div></div>
-        <div class="phase-card"><div class="phase-val" id="v-L3">–</div><div class="phase-lbl">L3 V</div></div>
-      </div>
+      <div class="card-sub" id="e-label" style="margin-top:10px;font-size:11px;text-align:center"></div>
     </div>
 
     <button class="update-btn" onclick="fetchData()">↻ Aktualisieren</button>
@@ -548,7 +522,7 @@
       <canvas id="chartHeat" height="140"></canvas>
     </div>
     <div class="chart-wrap">
-      <div class="chart-title">Boilertemperatur (°C)</div>
+      <div class="chart-title">Energie gesamt (kWh)</div>
       <canvas id="chartTemp" height="140"></canvas>
     </div>
   </div>
@@ -671,32 +645,38 @@ function setGauge(watts) {
   valEl.classList.toggle('zero', watts === 0);
 }
 
+function inferStages(watts) {
+  // Greedy decomposition: 2000W → 1000W → 500W
+  let w = Math.round(watts / 500) * 500;
+  const on2000 = w >= 2000; if (on2000) w -= 2000;
+  const on1000 = w >= 1000; if (on1000) w -= 1000;
+  const on500  = w >= 500;
+  return { on500, on1000, on2000 };
+}
+
 function applyReadings(r) {
-  const on500  = rv(r,'Heizstab_500W')  === 'on';
-  const on1000 = rv(r,'Heizstab_1000W') === 'on';
-  const on2000 = rv(r,'Heizstab_2000W') === 'on';
-  const anyOn  = on500 || on1000 || on2000;
+  const totalW = parseFloat(rv(r,'power_W','0')) || 0;
+  const { on500, on1000, on2000 } = inferStages(totalW);
+  const anyOn = on500 || on1000 || on2000;
 
   setStage('stage-500',  'coil-g1', 'pill-500',  on500);
   setStage('stage-1000', 'coil-g2', 'pill-1000', on1000);
   setStage('stage-2000', 'coil-g3', 'pill-2000', on2000);
   document.getElementById('coil-outer').classList.toggle('active', anyOn);
 
-  const totalW = parseFloat(rv(r,'Heizstab_Total_Watt','0')) || 0;
   setGauge(totalW);
   document.getElementById('pbar-fill').style.width =
     Math.min(100, (totalW/ARC_MAX)*100).toFixed(1)+'%';
 
-  const ist  = parseFloat(rv(r,'Boilertemperatur_ist', '0'))  || 0;
-  const soll = parseFloat(rv(r,'Boilertemperatur_soll','60')) || 60;
-  document.getElementById('temp-ist').textContent       = ist.toFixed(1)  + ' °C';
-  document.getElementById('temp-soll-disp').textContent = soll.toFixed(1) + ' °C';
-  document.getElementById('soll-input').value = Math.round(soll);
-  const bar = document.getElementById('temp-bar');
-  bar.style.width      = Math.min(100,(ist/Math.max(soll,90))*100).toFixed(1)+'%';
-  bar.style.background = ist >= soll ? '#ff6a2f' : '#29b6f6';
+  // ── Energie & Kosten ──────────────────────────────────────────────────────
+  const kwh    = parseFloat(rv(r,'energy_kWh','0')) || 0;
+  const tariff = parseFloat(rv(r,'tariff','0'))     || 0;
+  document.getElementById('e-kwh').textContent    = kwh.toFixed(1);
+  document.getElementById('e-tariff').textContent = tariff > 0 ? (tariff * 100).toFixed(1) : '–';
+  const label = rv(r,'meter_label','');
+  document.getElementById('e-label').textContent  = label;
 
-  // ── Staleness check: if lastUpdate is older than STALE_SEC, treat as offline ──
+  // ── Staleness / connection state ─────────────────────────────────────────
   const STALE_SEC = 180;
   const ts        = rv(r,'lastUpdate','');
   const ageMs     = ts ? Date.now() - new Date(ts.replace(' ','T')).getTime() : Infinity;
@@ -705,22 +685,11 @@ function applyReadings(r) {
   const devState  = rv(r,'deviceState','–');
   const fhemState = rv(r,'state','–');
   const isOnline  = !isStale && devState === 'online';
-  const isOffline = isStale || devState === 'offline' || devState === 'unknown' || fhemState === 'heaterOffline';
+  const isOffline = isStale || devState !== 'online';
 
   if      (isOnline)  setChip('dev','online',  'Online');
   else if (isOffline) setChip('dev','offline', 'Heizstab offline');
   else                setChip('dev','error',   devState !== '–' ? devState : fhemState);
-
-  const hasEnergy = r['Power_L1'] || r['Voltage_L1'];
-  document.getElementById('card-energy').style.display = hasEnergy ? '' : 'none';
-  if (hasEnergy) {
-    ['L1','L2','L3'].forEach(ph => {
-      const pe = document.getElementById('e-'+ph);
-      const ve = document.getElementById('v-'+ph);
-      if (pe) pe.textContent = parseFloat(rv(r,'Power_'+ph,'–')).toFixed(0);
-      if (ve) ve.textContent = parseFloat(rv(r,'Voltage_'+ph,'–')).toFixed(1);
-    });
-  }
 
   document.getElementById('footer-ts').textContent = ts
     ? `Stand: ${ts}${isStale ? '  ·  Daten veraltet' : ''}` : '';
@@ -739,17 +708,6 @@ function setChip(id, state, txt) {
   else if (state === 'offline') el.classList.add('offline');
   else if (state === 'error')   el.classList.add('warn');
   document.getElementById('chip-'+id+'-txt').textContent = txt;
-}
-
-async function setSollTemp() {
-  const t = parseFloat(document.getElementById('soll-input').value);
-  if (isNaN(t)||t<0||t>99) { showToast('Ungültige Temperatur (0–99)'); return; }
-  if (!deviceName) { showToast('Kein Device konfiguriert'); return; }
-  try {
-    await fhemGet(`set ${deviceName} Boilertemperatur_soll ${t}`);
-    showToast(`Solltemperatur: ${t} °C gesetzt`);
-    setTimeout(fetchData, 2000);
-  } catch(e) { showToast('Fehler beim Setzen'); }
 }
 
 /* ── History charts ── */
@@ -792,25 +750,22 @@ const chartCfg = (datasets) => ({
 });
 
 async function loadCharts() {
-  const [hData,iData,sData] = await Promise.all([
-    fetchDbLog('Heizstab_Total_Watt',   histHours),
-    fetchDbLog('Boilertemperatur_ist',  histHours),
-    fetchDbLog('Boilertemperatur_soll', histHours),
+  const [hData,eData] = await Promise.all([
+    fetchDbLog('power_W',    histHours),
+    fetchDbLog('energy_kWh', histHours),
   ]);
   if (chartHeat) { chartHeat.destroy(); chartHeat=null; }
   if (chartTemp) { chartTemp.destroy(); chartTemp=null; }
 
   chartHeat = new Chart(document.getElementById('chartHeat'), chartCfg([{
-    label:'Heizstab W', data:hData, borderColor:'#ff6a2f',
+    label:'Leistung W', data:hData, borderColor:'#ff6a2f',
     backgroundColor:'rgba(255,106,47,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3
   }]));
 
-  chartTemp = new Chart(document.getElementById('chartTemp'), chartCfg([
-    { label:'Ist °C',  data:iData, borderColor:'#29b6f6',
-      backgroundColor:'rgba(41,182,246,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3 },
-    { label:'Soll °C', data:sData, borderColor:'#ff6a2f',
-      backgroundColor:'transparent',         fill:false, pointRadius:0, borderWidth:1.5, tension:0, borderDash:[5,4] }
-  ]));
+  chartTemp = new Chart(document.getElementById('chartTemp'), chartCfg([{
+    label:'Energie kWh', data:eData, borderColor:'#29b6f6',
+    backgroundColor:'rgba(41,182,246,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3
+  }]));
 }
 
 /* ── Particles ── */

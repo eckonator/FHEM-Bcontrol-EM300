@@ -1,11 +1,9 @@
 # 73_BControl.pm
 
-FHEM-Modul für den **B-Control EM300 Energiemanager / Heizstab** – holt Sensordaten direkt über die lokale HTTP-API des Geräts, ohne Cloud-Account oder externen Proxy.
+FHEM-Modul für den **B-Control EM300 Smart Heater** – holt Echtzeitdaten direkt über die lokale HTTP-API des Geräts, ohne Cloud-Account oder externen Proxy.
 
-> Getestet mit: **B-Control EM300** mit angeschlossenem 3-stufigen Heizstab (500 W / 1000 W / 2000 W)
+> Getestet mit: **B-Control EM300** mit angeschlossenem E.G.O. Smart Heater
 > Entwickelt als Ersatz für das bisherige Setup: `HTTPMOD` + `DOIF` + `AT` aus `bcontrol.cfg`
-
-**Alle bisherigen Reading-Namen bleiben erhalten** – DbLog-Definitionen, SVG-Plots und Notify-Regeln funktionieren ohne Änderungen weiter.
 
 ---
 
@@ -23,7 +21,6 @@ FHEM-Modul für den **B-Control EM300 Energiemanager / Heizstab** – holt Senso
 - [Beispiel-Konfiguration](#beispiel-konfiguration)
 - [Webapp](#webapp)
 - [Hintergrund: API-Flow](#hintergrund-api-flow)
-- [Migration von HTTPMOD](#migration-von-httpmod)
 
 ---
 
@@ -34,10 +31,10 @@ Das Modul verbindet sich direkt mit der **lokalen HTTP-API** des B-Control EM300
 Der Ablauf:
 
 ```
-POST /start.php (Cookie-Login) → GET /mum-webservice/unieq.php (Sensordaten) → Readings schreiben
+POST /start.php (Cookie-Login) → GET /mum-webservice/consumption.php?meter_id=<n> → Readings schreiben
 ```
 
-Die Authentifizierung erfolgt über ein **Cookie-Session**-Verfahren: Das Modul meldet sich per POST an `/start.php` an, erhält einen Session-Cookie und sendet diesen bei allen weiteren Anfragen mit. Bei `"authentication":false` in der Antwort oder bei Verbindungsproblemen wird automatisch neu angemeldet.
+Die Authentifizierung erfolgt über ein **Cookie-Session**-Verfahren. Bei `"authentication":false` in der Antwort oder bei Verbindungsproblemen wird automatisch neu angemeldet.
 
 ---
 
@@ -49,7 +46,7 @@ Die Authentifizierung erfolgt über ein **Cookie-Session**-Verfahren: Das Modul 
   - `URI::Escape` (sonst: `apt install liburi-perl`)
 - `HttpUtils` (FHEM-intern, immer vorhanden)
 - B-Control EM300 im lokalen Netzwerk (HTTP Port 80)
-- Passwort des Geräts (Standard-Passwort leer oder gerätespezifisch)
+- Meter-ID des Heizstabs (in der B-Control WebGUI einsehbar)
 
 ---
 
@@ -80,7 +77,13 @@ cp -r www/bcontrol /opt/fhem/www/
 ### 1. Device anlegen
 
 ```
-define BControl_EnergyManager BControl 192.168.178.115
+define BControl_EnergyManager BControl <ip> <meter_id> [<port>]
+```
+
+Die **Meter-ID** findet man in der B-Control WebGUI unter dem jeweiligen Zähler. Beispiel:
+
+```
+define BControl_EnergyManager BControl 192.168.178.115 4
 ```
 
 ### 2. Passwort setzen
@@ -111,7 +114,6 @@ attr BControl_EnergyManager interval 60
 | `port` | `80` | HTTP-Port des Geräts |
 | `disable` | `0` | `1` = alle Abfragen deaktivieren |
 | `disabledForIntervals` | – | Abfragen in Zeitbereichen deaktivieren, z.B. `23:00-06:00` |
-| `event-on-change-reading` | – | Nur bei Wertänderung Events erzeugen |
 
 ---
 
@@ -123,7 +125,6 @@ attr BControl_EnergyManager interval 60
 | `set <name> nopassword` | Login ohne Passwort konfigurieren |
 | `set <name> update` | Sofortigen Datenabruf anstoßen |
 | `set <name> relogin` | Session zurücksetzen und neu anmelden |
-| `set <name> Boilertemperatur_soll <°C>` | Soll-Temperatur des Boilers setzen (0–99 °C) |
 
 ---
 
@@ -132,7 +133,7 @@ attr BControl_EnergyManager interval 60
 | Befehl | Beschreibung |
 |---|---|
 | `get <name> update` | Sofortiger Datenabruf |
-| `get <name> raw` | Rohe JSON-Antwort des Geräts ins FHEM-Log schreiben (Debug) |
+| `get <name> raw` | Rohe JSON-Antwort des Geräts ins FHEM-Log schreiben (Debug, verbose 1) |
 
 ---
 
@@ -143,63 +144,46 @@ attr BControl_EnergyManager interval 60
 | `API_LAST_MSG` | Letzter HTTP-Status-Code (200 = OK) |
 | `API_LAST_RES` | Unix-Timestamp des letzten erfolgreichen Abrufs |
 | `NEXT` | Zeitpunkt des nächsten geplanten Abrufs |
-| `SERIAL` | Seriennummer des Geräts (falls im Login zurückgegeben) |
-| `APP_VERSION` | Firmware-Version des Geräts |
 | `SOURCE` | API-Endpunkt |
 | `VERSION` | Modulversion |
+| `METER_ID` | Konfigurierte Meter-ID |
 
 ---
 
 ## Readings
 
-### Heizstab (Backward-kompatibel, exakt wie bisheriger HTTPMOD-Setup)
-
 | Reading | Einheit | Beschreibung |
 |---|---|---|
-| `Heizstab_500W` | on/off | Status Heizstufe 500 W |
-| `Heizstab_1000W` | on/off | Status Heizstufe 1000 W |
-| `Heizstab_2000W` | on/off | Status Heizstufe 2000 W |
-| `Heizstab_Total_Watt` | W | Gesamtleistung Heizstab |
-| `Boilertemperatur_ist` | °C | Aktuelle Boilertemperatur |
-| `Boilertemperatur_soll` | °C | Solltemperatur Boiler |
-| `state` | – | State-String (identisch zu bisherigem stateFormat) |
-
-### Gerätestatus
-
-| Reading | Beschreibung |
-|---|---|
-| `deviceState` | Status des Geräts: `online` / `offline` / `error` |
-| `lastUpdate` | Zeitstempel des letzten erfolgreichen Abrufs |
-
-### Energiemessung EM300 (optional, falls vom Gerät geliefert)
-
-| Reading | Einheit | Beschreibung |
-|---|---|---|
-| `Power_L1` / `Power_L2` / `Power_L3` | W | Wirkleistung je Phase |
-| `Power_total` | W | Wirkleistung gesamt |
-| `Voltage_L1` / `Voltage_L2` / `Voltage_L3` | V | Spannung je Phase |
-| `Current_L1` / `Current_L2` / `Current_L3` | A | Strom je Phase |
-| `Frequency` | Hz | Netzfrequenz |
-| `PowerFactor` | – | Leistungsfaktor |
-| `total_energy_*` | kWh | Wirkenergie (aus Wh umgerechnet) |
+| `power_W` | W | Aktuelle Leistungsaufnahme (aus Register `1-0:1.4.0*255`) |
+| `energy_kWh` | kWh | Gesamtenergie seit Inbetriebnahme |
+| `energy_Wh` | Wh | Gesamtenergie (Rohwert aus Register `1-0:1.8.0*255`) |
+| `deviceState` | – | `online` (status=0) oder `status_N` |
+| `meter_status` | – | Rohwert des Gerätestatus (0 = OK) |
+| `is_smartheater` | 0/1 | Gerät identifiziert sich als Smart Heater |
+| `meter_label` | – | Gerätebeschreibung (z.B. "E.G.O. Elektro-Geraetebau GmbH Smart Heater") |
+| `meter_number` | – | Zählerseriennummer |
+| `tariff` | EUR/kWh | Aktueller Stromtarif |
+| `tariff_currency` | – | Währung (z.B. EUR) |
+| `lastUpdate` | – | Zeitstempel des letzten erfolgreichen Abrufs |
+| `state` | – | Zusammenfassung: `online \| 500 W \| 1411.2 kWh` |
 
 ---
 
 ## Beispiel-Konfiguration
 
 ```perl
-# Device anlegen
-define BControl_EnergyManager BControl 192.168.178.123
+# Device anlegen (meter_id aus B-Control WebGUI)
+define BControl_EnergyManager BControl 192.168.178.115 4
 
 # Passwort einmalig setzen – erscheint NICHT in fhem.cfg:
-# set BControl_EnergyManager password deinPasswort
+# set BControl_EnergyManager nopassword
 
 attr BControl_EnergyManager alias B-Control EnergyManager Heizstab
 attr BControl_EnergyManager interval 60
 
-attr BControl_EnergyManager event-on-change-reading Heizstab_Total_Watt,Boilertemperatur_ist,Boilertemperatur_soll
+attr BControl_EnergyManager event-on-change-reading power_W,energy_kWh
 attr BControl_EnergyManager DbLogExclude .*
-attr BControl_EnergyManager DbLogInclude Heizstab_Total_Watt,Boilertemperatur_ist,Boilertemperatur_soll
+attr BControl_EnergyManager DbLogInclude power_W,energy_kWh,deviceState
 ```
 
 ---
@@ -208,11 +192,10 @@ attr BControl_EnergyManager DbLogInclude Heizstab_Total_Watt,Boilertemperatur_is
 
 Unter `www/bcontrol/index.html` liegt eine vollständige Single-File-Webapp mit:
 
-- **Heizstab-Stufen**: Drei farbige Kacheln (500 W / 1000 W / 2000 W) zeigen aktive Stufen
-- **Gesamtleistung**: Große Watt-Anzeige mit automatischer W/kW-Umschaltung
-- **Boilertemperatur**: Ist/Soll-Anzeige mit Balken und direktem Eingabefeld zum Setzen der Solltemperatur
-- **Energiemessung**: Phasenweise Leistungs- und Spannungsanzeige (falls vom Gerät geliefert)
-- **Verlaufs-Charts** (Tab): Heizstab-Leistung und Boilertemperatur (Ist/Soll) aus DbLog
+- **Heizstab-Stufen**: Visuelle Darstellung aktiver Heizstufen (500 W / 1000 W / 2000 W), aus der Gesamtleistung abgeleitet
+- **Gesamtleistung**: Große Watt-Anzeige mit Arc-Gauge und automatischer W/kW-Umschaltung
+- **Energie & Kosten**: Gesamtenergie (kWh) und Stromtarif
+- **Verlaufs-Charts** (Tab): Leistungsverlauf (W) und Energie-Verlauf (kWh) aus DbLog
 
 ### Webapp installieren
 
@@ -245,45 +228,31 @@ Beim ersten Aufruf über das Einstellungs-Icon (⚙) konfigurieren:
 POST http://{ip}/start.php
   Body: password={pw}
   → Set-Cookie: PHPSESSID=…
-  → JSON: { "authentication": true, "serial": "…", "app_version": "…" }
+  → JSON: { "authentication": true }
 
-GET http://{ip}/mum-webservice/unieq.php?method=GET&identifier=remaked&context=sensor
+GET http://{ip}/mum-webservice/consumption.php?meter_id={n}
   Header: Cookie: PHPSESSID=…
-  → JSON (flache Schlüssel):
+  → JSON:
     {
       "authentication": true,
-      "meters_01_state": "online",
-      "meters_01_switches_01_state": "on",
-      "meters_01_switches_02_state": "off",
-      "meters_01_switches_03_state": "off",
-      "meters_01_registers_01_value": "1500",
-      "meters_01_temperatur_boiler": "54.2",
-      "meters_01_user_temperatur_nominal": "60",
-      ...
+      "05_power": 0.5,                   ← kW (Prefix = meter_id+1, zweistellig)
+      "05_energy": 1410.91,              ← kWh
+      "05_status": 0,                    ← 0 = OK/online
+      "05_meter_label": "E.G.O. ...",
+      "05_meter_number": "41237558",
+      "05_tariff": 0.1469,               ← EUR/kWh
+      "is_smartheater": true,
+      "registers": [
+        {"register":"1-0:1.4.0*255","value":500},      ← aktuelle Leistung W
+        {"register":"1-0:1.8.0*255","value":1410915}   ← Gesamtenergie Wh
+      ]
     }
-
-POST http://{ip}/mum-webservice/unieq.php?method=SET&identifier=remaked&context=sensor
-  Header: Cookie: PHPSESSID=…
-  Body:   {"meters_01_user_temperatur_nominal": "65"}
-  → Solltemperatur setzen
 ```
 
+Der JSON-Key-Prefix (`05_`) ergibt sich aus `meter_id + 1`, zweistellig formatiert.
+Beispiel: `meter_id=4` → Prefix `05_`.
+
 Bei `"authentication": false` in der Antwort → automatischer Re-Login.
-
----
-
-## Migration von HTTPMOD
-
-Das neue Modul ersetzt folgende Definitionen aus `bcontrol.cfg` vollständig:
-
-| Alt | Neu |
-|---|---|
-| `HTTPMOD BControl_EnergyManager_Heizstab` | `BControl BControl_EnergyManager` |
-| `HTTPMOD BControl_EnergyManager_Heizstab_Status` | integriert (Reading `deviceState`) |
-| `DOIF BControl_EnergyManager_Heizstab_Korrektur_wenn_offline_DOIF` | integriert (automatische Re-Auth + Fehlerbehandlung) |
-| `AT BControl_EnergyManager_Heizstab_Updater_AT` | integriert (InternalTimer via `interval`-Attribut) |
-
-Die Reading-Namen `Heizstab_500W`, `Heizstab_1000W`, `Heizstab_2000W`, `Heizstab_Total_Watt`, `Boilertemperatur_ist`, `Boilertemperatur_soll` bleiben **identisch** – keine Anpassung an DbLog, SVG-Plots oder Notify nötig.
 
 ---
 
