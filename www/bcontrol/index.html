@@ -323,10 +323,6 @@
   .settings-panel input { width:100%; background:var(--bg-card2); border:1px solid var(--border);
     color:var(--text); border-radius:10px; padding:9px 12px; font-size:14px; }
   .settings-panel input:focus { outline:none; border-color:var(--heat); }
-  .settings-save { width:100%; margin-top:16px; background:var(--heat); color:#fff;
-    border:none; border-radius:12px; padding:12px; font-size:13px; font-weight:700;
-    letter-spacing:1px; cursor:pointer; }
-
   /* history */
   .time-btns { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
   .time-btn  { padding:6px 14px; border-radius:10px; font-size:11px; font-weight:600;
@@ -369,12 +365,11 @@
 
   <div class="settings-panel" id="settingsPanel" style="display:none">
     <label>FHEM URL</label>
-    <input id="cfgFhemUrl" placeholder="/fhem" value="/fhem">
+    <input id="cfgFhemUrl" placeholder="/fhem" value="/fhem" oninput="saveSettings()">
     <label>FHEM Device-Name</label>
-    <input id="cfgDevice" placeholder="BControl_EnergyManager">
+    <input id="cfgDevice" placeholder="BControl_EnergyManager" oninput="saveSettings()">
     <label>DbLog Device-Name</label>
-    <input id="cfgDbLog" placeholder="DBLOG">
-    <button class="settings-save" onclick="saveSettings()">Speichern</button>
+    <input id="cfgDbLog" placeholder="DBLOG" oninput="saveSettings()">
   </div>
 
   <div class="tabs">
@@ -553,8 +548,6 @@ function saveSettings() {
   localStorage.setItem('fhemUrl_bc',    fhemUrl);
   localStorage.setItem('deviceName_bc', deviceName);
   localStorage.setItem('dbLogName_bc',  dbLogName);
-  toggleSettings();
-  showToast('Einstellungen gespeichert');
   startPoll();
 }
 function toggleSettings() {
