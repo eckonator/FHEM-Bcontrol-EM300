@@ -1,8 +1,8 @@
-# 73_BControl.pm
+# 73_BControl.pm – BControl SmartHeater
 
-FHEM-Modul für den **B-Control EM300 Smart Heater** – holt Echtzeitdaten direkt über die lokale HTTP-API des Geräts, ohne Cloud-Account oder externen Proxy.
+FHEM-Modul für den **E.G.O. Smart Heater** über den **B-Control Energiemanager** – holt Echtzeitdaten direkt über die lokale HTTP-API des Geräts, ohne Cloud-Account oder externen Proxy.
 
-> Getestet mit: **B-Control EM300** mit angeschlossenem E.G.O. Smart Heater
+> Kompatibel mit: **B-Control EM210, EM300** (und baugleichen Modellen) mit angeschlossenem E.G.O. Smart Heater
 > Entwickelt als Ersatz für das bisherige Setup: `HTTPMOD` + `DOIF` + `AT` aus `bcontrol.cfg`
 
 ---
@@ -26,7 +26,7 @@ FHEM-Modul für den **B-Control EM300 Smart Heater** – holt Echtzeitdaten dire
 
 ## Funktionsweise
 
-Das Modul verbindet sich direkt mit der **lokalen HTTP-API** des B-Control EM300 im Heimnetz. Kein Cloud-Account, kein externer Proxy.
+Das Modul verbindet sich direkt mit der **lokalen HTTP-API** des B-Control Energiemanagers im Heimnetz. Kein Cloud-Account, kein externer Proxy.
 
 Der Ablauf:
 
@@ -45,7 +45,7 @@ Die Authentifizierung erfolgt über ein **Cookie-Session**-Verfahren. Bei `"auth
   - `JSON` (sonst: `apt install libjson-perl`)
   - `URI::Escape` (sonst: `apt install liburi-perl`)
 - `HttpUtils` (FHEM-intern, immer vorhanden)
-- B-Control EM300 im lokalen Netzwerk (HTTP Port 80)
+- B-Control Energiemanager (EM210, EM300 o.ä.) im lokalen Netzwerk (HTTP Port 80)
 - Meter-ID des Heizstabs (in der B-Control WebGUI einsehbar)
 
 ---
@@ -157,15 +157,16 @@ attr BControl_EnergyManager interval 60
 | `power_W` | W | Aktuelle Leistungsaufnahme (aus Register `1-0:1.4.0*255`) |
 | `energy_kWh` | kWh | Gesamtenergie seit Inbetriebnahme |
 | `energy_Wh` | Wh | Gesamtenergie (Rohwert aus Register `1-0:1.8.0*255`) |
-| `deviceState` | – | `online` (status=0) oder `status_N` |
+| `deviceState` | – | `online`, `offline` oder `status_N` |
 | `meter_status` | – | Rohwert des Gerätestatus (0 = OK) |
 | `is_smartheater` | 0/1 | Gerät identifiziert sich als Smart Heater |
+| `lastresponse` | – | Heartbeat-Token des Heizstabs (`05_lastresponse`); ändert sich bei jeder aktiven Kommunikation – intern zur Erkennung eingefrorener Messwerte |
 | `meter_label` | – | Gerätebeschreibung (z.B. "E.G.O. Elektro-Geraetebau GmbH Smart Heater") |
 | `meter_number` | – | Zählerseriennummer |
 | `tariff` | EUR/kWh | Aktueller Stromtarif |
 | `tariff_currency` | – | Währung (z.B. EUR) |
 | `lastUpdate` | – | Zeitstempel des letzten erfolgreichen Abrufs |
-| `state` | – | Zusammenfassung: `online \| 500 W \| 1411.2 kWh` |
+| `state` | – | `online \| 500 W \| 1411.2 kWh` oder `heaterOffline` |
 
 ---
 
@@ -269,4 +270,4 @@ Markus Eckert · [github.com/eckonator](https://github.com/eckonator)
 ## Verwandte Module
 
 - [73_Plenticore.pm](../FHEM-Plenticore/README.md) – FHEM-Modul für den Kostal Plenticore Wechselrichter
-- [bcontrol-em300-hacs](https://github.com/ITTV-Tools/bcontrol-em300-hacs) – Home Assistant Integration (Basis der API-Analyse)
+- [bcontrol-em300-hacs](https://github.com/ITTV-Tools/bcontrol-em300-hacs) – Home Assistant Integration für B-Control EM300 (Basis der API-Analyse)

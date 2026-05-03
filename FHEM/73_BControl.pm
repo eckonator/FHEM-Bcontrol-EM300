@@ -1,7 +1,8 @@
 ################################################################################
-# $Id: 73_BControl.pm 00002 2026-05-02 00:00:00Z markus $
+# $Id: 73_BControl.pm 00003 2026-05-03 00:00:00Z markus $
 #
-# FHEM module for B-Control EM300 energy manager / Heizstab controller
+# FHEM module for the E.G.O. Smart Heater via B-Control energy manager
+# (compatible with B-Control EM210, EM300 and similar models)
 # Fetches sensor data directly via the device's local HTTP API.
 #
 # API: POST /start.php (cookie login)
@@ -438,7 +439,7 @@ sub BC_WriteReadings {
         $dev_state = 'offline';
     }
 
-    # Stale-data detection: when the heater loses power the EM300 stays reachable
+    # Stale-data detection: when the heater loses power the B-Control stays reachable
     # but freezes 05_lastresponse and holds the last power reading.
     # If the heater heartbeat hasn't advanced since the previous poll and power is
     # non-zero, the reading is stale and the heater is effectively offline.
@@ -525,23 +526,24 @@ sub BControl_GetRaw {
 
 =pod
 =item device
-=item summary FHEM module for B-Control EM300 Smart Heater
-=item summary_DE FHEM-Modul für den B-Control EM300 Smart Heater
+=item summary FHEM module for E.G.O. Smart Heater via B-Control energy manager
+=item summary_DE FHEM-Modul für den E.G.O. Smart Heater über B-Control Energiemanager
 
 =begin html
 
 <a name="BControl"></a>
-<h3>BControl</h3>
+<h3>BControl SmartHeater</h3>
 
-<p>Reads live data from a <b>B-Control EM300</b> smart heater via its local
-HTTP API (<code>/mum-webservice/consumption.php</code>).</p>
+<p>Reads live data from an <b>E.G.O. Smart Heater</b> via the local HTTP API of a
+<b>B-Control energy manager</b> (compatible with EM210, EM300 and similar models).
+API endpoint: <code>/mum-webservice/consumption.php</code>.</p>
 
 <a name="BControldefine"></a>
 <b>Define</b>
 <ul>
   <code>define &lt;name&gt; BControl &lt;ip&gt; &lt;meter_id&gt; [&lt;port&gt;]</code><br><br>
   <table>
-    <tr><td><code>ip</code></td><td>IP address of the B-Control device</td></tr>
+    <tr><td><code>ip</code></td><td>IP address of the B-Control energy manager</td></tr>
     <tr><td><code>meter_id</code></td><td>Meter ID as shown in the B-Control web UI (e.g. 4)</td></tr>
     <tr><td><code>port</code></td><td>HTTP port (default: 80)</td></tr>
   </table>
