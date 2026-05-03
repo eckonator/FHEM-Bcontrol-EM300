@@ -373,7 +373,11 @@ sub BControl_UpdateDataCb {
         return;
     }
 
-    BC_WriteReadings($hash, $json);
+    eval { BC_WriteReadings($hash, $json); };
+    if ($@) {
+        Log3($name, 2, "$name: BC_WriteReadings error: $@");
+        readingsSingleUpdate($hash, 'state', 'internal error', 1);
+    }
     BC_ScheduleUpdate($hash);
 }
 
@@ -404,6 +408,7 @@ sub BC_WriteReadings {
     my $energy_wh = undef;
     if (ref($j->{registers}) eq 'ARRAY') {
         for my $reg (@{$j->{registers}}) {
+            next unless ref($reg) eq 'HASH';
             if (($reg->{register} // '') =~ /1-0:1\.4\.0/) {
                 $power_w   = $reg->{value};
             }
@@ -415,24 +420,40 @@ sub BC_WriteReadings {
     # Fallback: 05_power is in kW
     $power_w //= ($j->{"${prefix}power"} // 0) * 1000;
 
-    my $status     = $j->{"${prefix}status"}       // -1;
-    my $energy_kwh = $j->{"${prefix}energy"}        // 0;
-    my $label      = $j->{"${prefix}meter_label"}   // '';
-    my $meter_nr   = $j->{"${prefix}meter_number"}  // '';
-    my $is_heater  = $j->{is_smartheater}           ? 1 : 0;
+    my $status        = $j->{"${prefix}status"}       // -1;
+    my $energy_kwh    = $j->{"${prefix}energy"}        // 0;
+    my $label         = $j->{"${prefix}meter_label"}   // '';
+    my $meter_nr      = $j->{"${prefix}meter_number"}  // '';
+    my $is_heater     = $j->{is_smartheater}           ? 1 : 0;
+    my $lastresponse  = $j->{"${prefix}lastresponse"}  // '';
 
     # status=0 means OK/online for the smart heater
-    my $dev_state  = ($status == 0) ? 'online' : "status_$status";
+    my $dev_state = ($status == 0) ? 'online' : "status_$status";
+
+    # Stale-data detection: when the heater loses power the EM300 stays reachable
+    # but freezes 05_lastresponse and holds the last power reading.
+    # If the heater heartbeat hasn't advanced since the previous poll and power is
+    # non-zero, the reading is stale and the heater is effectively offline.
+    if ($dev_state eq 'online'
+        && $lastresponse ne ''
+        && ($hash->{'.lastresponse'} // '') ne ''
+        && $lastresponse eq $hash->{'.lastresponse'}
+        && $power_w > 0) {
+        Log3($name, 3, "$name: heater offline – 05_lastresponse frozen at $lastresponse (stale ${power_w}W)");
+        $dev_state = 'offline';
+    }
+    $hash->{'.lastresponse'} = $lastresponse;
 
     readingsBeginUpdate($hash);
 
-    readingsBulkUpdate($hash, 'deviceState',   $dev_state);
-    readingsBulkUpdate($hash, 'power_W',       sprintf('%.0f', $power_w));
-    readingsBulkUpdate($hash, 'energy_kWh',    sprintf('%.3f', $energy_kwh));
-    readingsBulkUpdate($hash, 'meter_status',  $status);
+    readingsBulkUpdate($hash, 'deviceState',    $dev_state);
+    readingsBulkUpdate($hash, 'power_W',        sprintf('%.0f', $power_w));
+    readingsBulkUpdate($hash, 'energy_kWh',     sprintf('%.3f', $energy_kwh));
+    readingsBulkUpdate($hash, 'meter_status',   $status);
     readingsBulkUpdate($hash, 'is_smartheater', $is_heater);
-    readingsBulkUpdate($hash, 'meter_label',   $label)     if $label;
-    readingsBulkUpdate($hash, 'meter_number',  $meter_nr)  if $meter_nr;
+    readingsBulkUpdate($hash, 'meter_label',    $label)        if $label;
+    readingsBulkUpdate($hash, 'meter_number',   $meter_nr)     if $meter_nr;
+    readingsBulkUpdate($hash, 'lastresponse',   $lastresponse) if $lastresponse ne '';
 
     if (defined $energy_wh) {
         readingsBulkUpdate($hash, 'energy_Wh', sprintf('%.3f', $energy_wh));
@@ -449,10 +470,11 @@ sub BC_WriteReadings {
 
     readingsEndUpdate($hash, 1);
 
-    # State string
+    # State string – use plain 'heaterOffline' for all non-online cases so that
+    # notify rules can match it uniformly; deviceState carries the specific reason.
     my $state = ($dev_state eq 'online')
         ? "online | ${power_w} W | ${energy_kwh} kWh"
-        : "heaterOffline ($dev_state)";
+        : 'heaterOffline';
     readingsSingleUpdate($hash, 'state', $state, 1);
 
     $hash->{API_LAST_RES} = int(gettimeofday());
@@ -549,9 +571,10 @@ HTTP API (<code>/mum-webservice/consumption.php</code>).</p>
   <li><code>power_W</code> &ndash; current power consumption (W)</li>
   <li><code>energy_kWh</code> &ndash; total energy (kWh)</li>
   <li><code>energy_Wh</code> &ndash; total energy (Wh, from register)</li>
-  <li><code>deviceState</code> &ndash; online / status_N</li>
+  <li><code>deviceState</code> &ndash; online / offline / status_N</li>
   <li><code>meter_status</code> &ndash; raw status value (0 = OK)</li>
   <li><code>is_smartheater</code> &ndash; 1 if device identifies as smart heater</li>
+  <li><code>lastresponse</code> &ndash; heater heartbeat token (05_lastresponse); changes every poll while the heater is active, frozen when the heater loses power &ndash; used internally to detect stale readings</li>
   <li><code>meter_label</code> &ndash; device description</li>
   <li><code>meter_number</code> &ndash; meter serial number</li>
   <li><code>tariff</code> &ndash; current tariff (EUR/kWh)</li>
