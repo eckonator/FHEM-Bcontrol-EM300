@@ -430,6 +430,14 @@ sub BC_WriteReadings {
     # status=0 means OK/online for the smart heater
     my $dev_state = ($status == 0) ? 'online' : "status_$status";
 
+    # No register data: BControl has not received any live measurement from the
+    # heater (typical after a BControl restart while the heater is offline).
+    # A connected-but-idle heater would still deliver registers with value 0.
+    if ($dev_state eq 'online' && ref($j->{registers}) ne 'ARRAY') {
+        Log3($name, 3, "$name: heater offline – registers=null (no live data from heater)");
+        $dev_state = 'offline';
+    }
+
     # Stale-data detection: when the heater loses power the EM300 stays reachable
     # but freezes 05_lastresponse and holds the last power reading.
     # If the heater heartbeat hasn't advanced since the previous poll and power is
