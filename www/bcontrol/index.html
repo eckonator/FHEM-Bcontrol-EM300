@@ -514,11 +514,7 @@
     </div>
     <div class="chart-wrap">
       <div class="chart-title">Heizstab · Leistung (W)</div>
-      <canvas id="chartHeat" height="140"></canvas>
-    </div>
-    <div class="chart-wrap">
-      <div class="chart-title">Energie gesamt (kWh)</div>
-      <canvas id="chartTemp" height="140"></canvas>
+      <canvas id="chartHeat" height="160"></canvas>
     </div>
   </div>
 
@@ -704,7 +700,7 @@ function setChip(id, state, txt) {
 }
 
 /* ── History charts ── */
-let chartHeat=null, chartTemp=null;
+let chartHeat = null;
 
 function selectRange(h,btn) {
   histHours = h;
@@ -716,7 +712,7 @@ function selectRange(h,btn) {
 async function fetchDbLog(reading, hours) {
   const now  = new Date();
   const from = new Date(now - hours*3600000);
-  const fmt  = d => d.toISOString().replace('T',' ').slice(0,19);
+  const fmt  = d => d.toISOString().replace('T','_').slice(0,19);
   try {
     const txt = await fhemGet(`get ${dbLogName} - - ${fmt(from)} ${fmt(now)} ${deviceName}:${reading}:`);
     return txt.trim().split('\n').filter(l=>l.includes(' ')).map(l=>{
@@ -726,39 +722,34 @@ async function fetchDbLog(reading, hours) {
   } catch { return []; }
 }
 
-const chartCfg = (datasets) => ({
-  type:'line',
-  data:{ datasets },
-  options:{
-    animation:false, responsive:true,
-    scales:{
-      x:{ type:'time', time:{ tooltipFormat:'dd.MM. HH:mm' },
-        ticks:{ color:'rgba(180,200,220,.4)', maxTicksLimit:6, font:{size:10} },
-        grid:{ color:'rgba(255,255,255,.04)' } },
-      y:{ ticks:{ color:'rgba(180,200,220,.4)', font:{size:10} },
-        grid:{ color:'rgba(255,255,255,.04)' } }
-    },
-    plugins:{ legend:{ labels:{ color:'rgba(180,200,220,.55)', font:{size:11} } } }
-  }
-});
-
 async function loadCharts() {
-  const [hData,eData] = await Promise.all([
-    fetchDbLog('power_W',    histHours),
-    fetchDbLog('energy_kWh', histHours),
-  ]);
+  const hData = await fetchDbLog('power_W', histHours);
   if (chartHeat) { chartHeat.destroy(); chartHeat=null; }
-  if (chartTemp) { chartTemp.destroy(); chartTemp=null; }
 
-  chartHeat = new Chart(document.getElementById('chartHeat'), chartCfg([{
-    label:'Leistung W', data:hData, borderColor:'#ff6a2f',
-    backgroundColor:'rgba(255,106,47,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3
-  }]));
-
-  chartTemp = new Chart(document.getElementById('chartTemp'), chartCfg([{
-    label:'Energie kWh', data:eData, borderColor:'#29b6f6',
-    backgroundColor:'rgba(41,182,246,.10)', fill:true, pointRadius:0, borderWidth:1.5, tension:.3
-  }]));
+  chartHeat = new Chart(document.getElementById('chartHeat'), {
+    type:'bar',
+    data:{ datasets:[{
+      label:'Heizstab (W)', data:hData,
+      backgroundColor:'rgba(255,106,47,.55)',
+      borderColor:'#ff6a2f',
+      borderWidth:1,
+      borderRadius:2,
+    }]},
+    options:{
+      animation:false, responsive:true,
+      scales:{
+        x:{ type:'time', time:{ tooltipFormat:'dd.MM. HH:mm' },
+          offset:true,
+          ticks:{ color:'rgba(180,200,220,.4)', maxTicksLimit:6, font:{size:10} },
+          grid:{ color:'rgba(255,255,255,.04)' } },
+        y:{ min:0, max:3500,
+          ticks:{ color:'rgba(180,200,220,.4)', font:{size:10} },
+          grid:{ color:'rgba(255,255,255,.04)' },
+          title:{ display:true, text:'Watt', color:'rgba(180,200,220,.4)', font:{size:10} } }
+      },
+      plugins:{ legend:{ labels:{ color:'rgba(180,200,220,.55)', font:{size:11} } } }
+    }
+  });
 }
 
 /* ── Particles ── */
